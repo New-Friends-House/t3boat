@@ -455,6 +455,18 @@ async fn sign_in_agent(ui: State<'_, Ui>, id: String, agent: String) -> Res {
     ui.app()?.machine(&id).map_err(err)?.sign_in(agent).await.map_err(err)
 }
 
+/// Turns CLIProxyAPI on or off for the machine's agents, waking it to do so.
+#[tauri::command]
+async fn set_cliproxy(ui: State<'_, Ui>, id: String, on: bool) -> Res {
+    ui.app()?.machine(&id).map_err(err)?.set_cliproxy(on).await.map_err(err)
+}
+
+/// Signs an account out of the machine's CLIProxyAPI: `file` as `cliproxyAccounts` lists it.
+#[tauri::command]
+async fn remove_cliproxy_account(ui: State<'_, Ui>, id: String, file: String) -> Res {
+    ui.app()?.machine(&id).map_err(err)?.remove_cliproxy_account(&file).await.map_err(err)
+}
+
 /// Turns on T3 Connect there; resolves once other devices can reach it, after the user signed in
 /// to their T3 account in the browser.
 #[tauri::command]
@@ -587,6 +599,8 @@ pub fn run() {
             resize_machine,
             keep_awake,
             sign_in_agent,
+            set_cliproxy,
+            remove_cliproxy_account,
             turn_on_connect,
             get_machine_details,
             latest_thread,

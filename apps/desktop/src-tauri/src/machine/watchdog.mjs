@@ -10,7 +10,7 @@
 // and acks; without an ack (laptop gone) the watchdog stops after a grace period.
 
 import { createServer } from "node:http";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { availableParallelism, homedir } from "node:os";
@@ -22,6 +22,8 @@ const CONFIG_PATH = join(HOME, ".t3boat", "config.json");
 const KEEP_AWAKE_PATH = join(HOME, ".t3boat", "keep-awake-until");
 const MAX_KEEP_AWAKE_MINUTES = 24 * 60;
 const DB_PATH = join(HOME, ".t3", "userdata", "statev2.sqlite");
+// CLIProxyAPI's credential files, when the machine's agents use it (cliproxy.sh).
+const CLIPROXY_AUTHS = join(HOME, ".t3boat", "cliproxy", "auths");
 const T3_ORIGIN = "http://127.0.0.1:3773";
 const PORT = 3774;
 const TICK_MS = 5_000;
@@ -352,6 +354,25 @@ function finishDrain() {
   stopSelf();
 }
 
+/** The accounts signed in to CLIProxyAPI: which vendor and who, never a token. null: never set up. */
+function cliproxyAccounts() {
+  let files;
+  try {
+    files = readdirSync(CLIPROXY_AUTHS).filter((f) => f.endsWith(".json")).sort();
+  } catch {
+    return null;
+  }
+  return files.flatMap((file) => {
+    try {
+      const a = JSON.parse(readFileSync(join(CLIPROXY_AUTHS, file), "utf8"));
+      if (typeof a.type !== "string") return [];
+      return [{ file, type: a.type, email: typeof a.email === "string" ? a.email : null, disabled: a.disabled === true }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function status() {
   return {
     phase,
@@ -366,6 +387,7 @@ function status() {
     sleepAfterSecs: config.sleepAfterSecs,
     nextDueAt,
     workDue: dueSoon(),
+    cliproxyAccounts: cliproxyAccounts(),
     // While stopping, it names the sequence the machine stops at: the proxy trusts its
     // capture only when they match.
     manifest: phase === "active" ? null : manifest,

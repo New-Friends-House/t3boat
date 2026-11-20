@@ -232,6 +232,18 @@ button.row-name {
 .line-ok .icon {
   fill: currentColor;
 }
+/* an account signed in to the machine's CLIProxyAPI, under its agent */
+.line.line-account {
+  min-height: 28px;
+  padding-left: 14px;
+  font-size: 12px;
+}
+.line.line-account + .line.line-account {
+  border-top: 0;
+}
+.line .btn-link.is-danger {
+  color: var(--danger);
+}
 
 .line-add {
   display: flex;

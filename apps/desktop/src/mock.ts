@@ -5,7 +5,7 @@
 // ?ready=1 (a new machine comes up in T3 Code with its agents signed in and acme on it, as the website shows it)
 import type { Backend } from "./api";
 import { timeLapse } from "./pixel/clock";
-import type { CommandArgs, CommandName, LocalProject, MachineDetails, MachineProject, MachineView, Setup, UiState } from "./types";
+import type { CliproxyAccount, CommandArgs, CommandName, LocalProject, MachineDetails, MachineProject, MachineView, Setup, UiState } from "./types";
 
 const params = new URLSearchParams(location.search);
 
@@ -77,6 +77,12 @@ const manyExtra: MachineView[] = [
 
 /** Machines with T3 Connect on. */
 const connectOn = new Set(["sb_7f2a"]);
+// machines whose agents use CLIProxyAPI there, and the accounts signed in to it
+const cliproxyOn = new Set<string>();
+const cliproxyAccounts: Record<string, CliproxyAccount[]> = {};
+const agentType = (agent: string) => agent.toLowerCase();
+const cliproxySignedOut = (id: string) =>
+  ["Claude", "Codex"].filter((a) => !(cliproxyAccounts[id] ?? []).some((x) => x.type === agentType(a)));
 
 /** Per-machine extras get_machine_details adds on top of MachineView. */
 const seedDetails: Record<string, { awake: number; month: number; days: number }> = {
@@ -262,7 +268,28 @@ function create(): MockBackend {
 
     async sign_in_agent({ id, agent }) {
       await wait(3000);
+      if (cliproxyOn.has(id)) {
+        const list = (cliproxyAccounts[id] ??= []);
+        const email = `you+${list.length + 1}@example.com`;
+        list.push({ file: `${agentType(agent)}-${email}.json`, type: agentType(agent), email, disabled: false });
+        patch(id, { signedOut: cliproxySignedOut(id) });
+        return;
+      }
       patch(id, { signedOut: find(id).signedOut.filter((a) => a !== agent) });
+    },
+
+    async set_cliproxy({ id, on }) {
+      find(id);
+      await wait(on ? 2500 : 800);
+      if (on) cliproxyOn.add(id);
+      else cliproxyOn.delete(id);
+      patch(id, { signedOut: on ? cliproxySignedOut(id) : [] });
+    },
+
+    async remove_cliproxy_account({ id, file }) {
+      await wait(600);
+      cliproxyAccounts[id] = (cliproxyAccounts[id] ?? []).filter((a) => a.file !== file);
+      patch(id, { signedOut: cliproxySignedOut(id) });
     },
 
     async open_machine({ id }) {
@@ -308,10 +335,14 @@ function create(): MockBackend {
         costToday,
         costMonth: extra.month + costToday,
         awakeSecsToday: awake,
-        agents: ["Claude", "Codex"].map((name) => ({ name, signedIn: !m.signedOut.includes(name) })),
+        agents: ["Claude", "Codex"].map((name) => {
+          const accounts = cliproxyOn.has(id) ? (cliproxyAccounts[id] ?? []).filter((a) => a.type === agentType(name)) : [];
+          return { name, signedIn: !m.signedOut.includes(name), viaCliproxy: cliproxyOn.has(id), accounts };
+        }),
         t3Version: "0.0.21",
         createdAt: Math.floor(Date.now() / 1000) - extra.days * 86400,
         connect: connectOn.has(id),
+        cliproxy: cliproxyOn.has(id),
       };
     },
 

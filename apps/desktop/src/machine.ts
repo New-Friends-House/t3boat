@@ -37,6 +37,9 @@ export type Action = {
   | { cmd: "keep_awake"; minutes: number | null }
   /** the agent's name as `signedOut` lists it */
   | { cmd: "sign_in_agent"; agent: string }
+  | { cmd: "set_cliproxy"; on: boolean }
+  /** a CliproxyAccount's file */
+  | { cmd: "remove_cliproxy_account"; file: string; account: string }
   /** discard: delete even while work runs on it */
   | { cmd: "delete_machine"; discard: boolean }
 );
@@ -51,6 +54,29 @@ export const signInTo = (agent: string): Action => ({
   label: `Sign in ${agent}`,
   busy: "Signing in…",
   agent,
+});
+
+/** Through CLIProxyAPI, a sign-in adds an account to the proxy on the machine. */
+export const addAccount = (agent: string): Action => ({
+  cmd: "sign_in_agent",
+  label: "Add account",
+  busy: "Signing in…",
+  agent,
+});
+
+export const cliproxyMode = (on: boolean): Action => ({
+  cmd: "set_cliproxy",
+  label: on ? "Use CLIProxyAPI" : "Use own sign-ins",
+  busy: on ? "Setting up CLIProxyAPI…" : "Switching back…",
+  on,
+});
+
+export const removeAccount = (file: string, account: string): Action => ({
+  cmd: "remove_cliproxy_account",
+  label: "Remove",
+  busy: "Removing account…",
+  file,
+  account,
 });
 
 export const ACTIONS = {

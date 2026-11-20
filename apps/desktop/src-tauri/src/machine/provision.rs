@@ -10,12 +10,19 @@ use serde::Deserialize;
 
 const PROVISION_SH: &str = include_str!("provision.sh");
 const WATCHDOG_MJS: &str = include_str!("watchdog.mjs");
+const CLIPROXY_SH: &str = include_str!("cliproxy.sh");
 const T3_PORT: u16 = 3773;
 const WATCHDOG_PORT: u16 = 3774;
 
 /// Identifies the provisioning scripts; a machine provisioned with others gets them on wake.
 pub fn revision() -> String {
-    let hash = fnv1a(PROVISION_SH.bytes().chain(WATCHDOG_MJS.bytes()).chain(SLEEP_AFTER_SECS.to_string().bytes()));
+    let hash = fnv1a(
+        PROVISION_SH
+            .bytes()
+            .chain(WATCHDOG_MJS.bytes())
+            .chain(CLIPROXY_SH.bytes())
+            .chain(SLEEP_AFTER_SECS.to_string().bytes()),
+    );
     format!("{hash:016x}")
 }
 
@@ -69,7 +76,8 @@ pub fn snapshot_name(name: &str, machine_id: &str) -> String {
 }
 
 /// Copies the scripts over as a file (the watchdog secret must not appear in any command line)
-/// and runs `provision.sh`.
+/// and runs `provision.sh`. `cliproxy`: the machine's agents use CLIProxyAPI there (`cliproxy.sh`).
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     boat: &Boat,
     sandbox_id: &str,
@@ -78,20 +86,24 @@ pub async fn run(
     watchdog_secret: &str,
     snapshot: &str,
     mint_upstream_token: bool,
+    cliproxy: bool,
 ) -> Result<Provisioned> {
     let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
     let script = format!(
         "set -e; d=$(mktemp -d); trap 'rm -rf \"$d\" \"$0\"' EXIT\n\
          echo {p} | base64 -d > \"$d/provision.sh\"; echo {w} | base64 -d > \"$d/watchdog.mjs\"\n\
-         T3BOAT_SECRET={s} bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name}\n",
+         echo {c} | base64 -d > \"$d/cliproxy.sh\"\n\
+         T3BOAT_SECRET={s} bash \"$d/provision.sh\" {v} {sleep} {snapshot} {mint} {name} {cliproxy}\n",
         p = b64(PROVISION_SH),
         w = b64(WATCHDOG_MJS),
+        c = b64(CLIPROXY_SH),
         v = shell_word(t3_version)?,
         s = shell_word(watchdog_secret)?,
         sleep = SLEEP_AFTER_SECS,
         snapshot = shell_word(snapshot)?,
         mint = u8::from(mint_upstream_token),
         name = shell_word(name)?,
+        cliproxy = u8::from(cliproxy),
     );
     let name = format!("t3boat-provision-{}.sh", random_token());
     let local = std::env::temp_dir().join(&name);
@@ -107,6 +119,17 @@ pub async fn run(
         .find(|l| l.starts_with('{'))
         .ok_or_else(|| anyhow!("provisioning printed no result"))?;
     Ok(serde_json::from_str(line)?)
+}
+
+/// Turns CLIProxyAPI on or off for the machine's agents (`cliproxy.sh`), on any provisioning
+/// revision: the script goes over with the command. Holds no secret; the proxy's key is made there.
+pub async fn apply_cliproxy(boat: &Boat, sandbox_id: &str, on: bool) -> Result<()> {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(CLIPROXY_SH);
+    let script = format!(
+        "set -e; f=$(mktemp); trap 'rm -f \"$f\"' EXIT; echo {b64} | base64 -d > \"$f\"; bash \"$f\" {}",
+        if on { "on" } else { "off" }
+    );
+    boat.exec_ok(sandbox_id, &script, 300).await.map(drop)
 }
 
 /// Only `[A-Za-z0-9._-]` reaches the remote shell.
@@ -143,7 +166,7 @@ pub async fn create(
     created(&id);
     progress("Installing T3 Code");
     let secret = random_token();
-    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true).await?;
+    let provisioned = run(boat, &id, name, t3_version, &secret, &snapshot_name(name, &id), true, false).await?;
     progress("Opening the machine's address");
     let (upstream_url, watchdog_url) = host(boat, &id).await?;
     Ok(Machine {
@@ -166,5 +189,7 @@ pub async fn create(
         created_at: chrono::Utc::now().timestamp(),
         next_due_at: None,
         connect: false,
+        cliproxy: false,
+        cliproxy_accounts: Vec::new(),
     })
 }

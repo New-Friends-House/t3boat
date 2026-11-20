@@ -255,7 +255,9 @@ impl Cache {
             .collect()
     }
 
-    /// Enabled agents that are not signed in.
+    /// Enabled agents that are not signed in, as T3 tells. The app's own `signed_out` also asks
+    /// a machine's CLIProxyAPI.
+    #[cfg(test)]
     pub fn signed_out_providers(&self) -> Vec<String> {
         self.agents().into_iter().filter(|(_, s)| s == "unauthenticated").map(|(n, _)| n).collect()
     }

@@ -32,7 +32,9 @@ interface MachineView {
   paired: boolean;     // false: T3 Code has not accepted it yet → show "Add to T3 Code"
   signedOut: string[]; // agents needing a sign-in on this machine, e.g. ["Claude", "Codex"].
                        // Each gets a button → sign_in_agent: the vendor's own login runs on the
-                       // machine, the browser opens, the user authorizes, done.
+                       // machine, the browser opens, the user authorizes, done. With CLIProxyAPI on
+                       // (MachineDetails.cliproxy), Claude/Codex are signed out while the proxy has no
+                       // account for them, and the button adds one.
   projects: { title: string; repoKey: string | null; status: string | null }[];
                        // its T3 projects as last seen (never wakes it), then those t3boat is adding:
                        // status = clone progress in T3's words ("Receiving objects · 42%"), null once
@@ -67,11 +69,23 @@ interface MachineDetails {
   costToday: number;          // dollars, this machine only
   costMonth: number;
   awakeSecsToday: number;
-  agents: { name: string; signedIn: boolean }[];    // names match MachineView.signedOut / sign_in_agent
+  agents: {                   // names match MachineView.signedOut / sign_in_agent
+    name: string;
+    signedIn: boolean;        // viaCliproxy: it has an account in the proxy
+    viaCliproxy: boolean;     // reaches its models through the machine's CLIProxyAPI
+    accounts: { file: string; type: string; email: string | null; disabled: boolean }[];
+                              // those accounts (never a token); empty unless viaCliproxy
+  }[];
   t3Version: string;          // T3 server version on the machine, e.g. "0.0.21"
   createdAt: number;          // unix secs
   connect: boolean;           // T3 Connect is on: the user's phone or a browser reach it with their T3 account
+  cliproxy: boolean;          // its Claude and Codex use CLIProxyAPI on the machine (per machine, saved here)
 }
+```
+
+The details view's **agents** section starts with a "Through CLIProxyAPI" switch (`set_cliproxy`). On, each of Claude and Codex lists its accounts in the proxy, with "Add account" (`sign_in_agent`) and Remove (`remove_cliproxy_account`, click twice).
+
+```ts
 ```
 
 ## Commands (`invoke(name, args)`), all reject with a string message on failure
@@ -87,6 +101,8 @@ interface MachineDetails {
 | `open_machine` | `{ id, thread? }` | brings T3 Code forward, into `thread` (an id from `latest_thread`) if given; re-sends the "add to T3 Code" dialog if not paired |
 | `pair_machine` | `{ id }` | re-sends T3 Code's "add backend" dialog (secondary "Add to T3 Code again") |
 | `sign_in_agent` | `{ id, agent }` | agent = a `signedOut` name ("Claude", "Codex"); resolves once signed in (user finishes in the browser, up to 10 min) |
+| `set_cliproxy` | `{ id, on }` | wakes the machine. On: installs CLIProxyAPI there (pinned version, checksum-checked) as a service on 127.0.0.1:8317 and points Claude Code (`~/.claude/settings.json` env) and Codex (`~/.codex/config.toml` provider) at it, with a key made there; resolves once applied. Off: stops it and takes exactly those settings back out, keeping the accounts. Accounts are signed in per machine (`sign_in_agent`), never copied from this computer: their OAuth refresh tokens are single-use |
+| `remove_cliproxy_account` | `{ id, file }` | `file` from `agents[].accounts`; deletes that credential from the machine's proxy |
 | `turn_on_connect` | `{ id }` | turns on T3 Connect with T3's own `t3 up --connect` on the machine: T3's sign-in page opens in the browser, the user approves it, T3 restarts there; resolves once other devices can reach it (up to ~15 min). Rejects while an agent works (the restart would stop it). Details shows "other devices · T3 Connect" with Turn on, or "on" |
 | `keep_awake` | `{ id, minutes }` | keeps the machine up that long even unused (`null`: until stopped, i.e. no auto sleep; 0 ends it; "Sleep now" ends it too); wakes it if asleep; enforced on the machine, so it holds with the laptop closed. Details has an **Auto sleep** switch (on = `!keepAwakeForever`; off → `null`, on → `0`) and, while auto sleep is on, a one-time "Stay awake for…" (15m · 30m · 1h · 2h) that runs out by itself, with Stop (`0`) while `keepAwakeUntil` is set |
 | `resize_machine` | `{ id, size }` | asleep: applies on next wake; idle: sleeps and wakes onto it now (about a minute), keeping a "keep awake"; working (an agent or a build): applies after it next sleeps, never mid-turn |

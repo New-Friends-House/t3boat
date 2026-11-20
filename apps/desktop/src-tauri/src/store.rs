@@ -42,6 +42,27 @@ pub struct Machine {
     /// T3 Connect is on there: other devices reach it with the user's T3 account.
     #[serde(default)]
     pub connect: bool,
+    /// Its agents (Claude, Codex) reach their models through CLIProxyAPI on the machine, with the
+    /// accounts signed in to it there, instead of through their own sign-ins.
+    #[serde(default)]
+    pub cliproxy: bool,
+    /// The accounts signed in to CLIProxyAPI there, as its watchdog last said; kept while it sleeps.
+    #[serde(default)]
+    pub cliproxy_accounts: Vec<CliproxyAccount>,
+}
+
+/// One account signed in to CLIProxyAPI on a machine: its credential file there. Never the token.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CliproxyAccount {
+    /// The file's name in the proxy's auth dir, e.g. `claude-me@example.com.json`.
+    pub file: String,
+    /// The vendor, as the proxy names it: `claude`, `codex`, ...
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub email: Option<String>,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
