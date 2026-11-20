@@ -281,6 +281,15 @@ impl MachineRuntime {
         self.stop_seen.lock().unwrap().is_some_and(|t| t.elapsed() < Self::STOP_SETTLE)
     }
 
+    /// A client asked for chats in the encoding `flags`: the capture stores them so. Saved
+    /// now and then, so it outlives a restart of t3boat while the machine sleeps.
+    pub fn note_thread_encoding(&self, flags: crate::proxy::threads::ThreadFlags) {
+        let save = self.cache.lock().unwrap().asked_thread_encoding(flags);
+        if save {
+            self.save_cache();
+        }
+    }
+
     pub fn save_cache(&self) {
         // Serialized and written under the lock: one writer at a time for the file.
         let result = {

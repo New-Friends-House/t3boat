@@ -185,6 +185,7 @@ pub async fn create(
         provision_revision: revision(),
         environment_id: provisioned.environment_id,
         client_tokens: Vec::new(),
+        device_tokens: Vec::new(),
         link_tokens: Vec::new(),
         created_at: chrono::Utc::now().timestamp(),
         next_due_at: None,

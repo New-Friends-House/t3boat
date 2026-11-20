@@ -59,11 +59,23 @@ fn dir(machine_dir: &Path) -> PathBuf {
     machine_dir.join("threads")
 }
 
+/// The longest file name file systems take (255 bytes), less the `.json` a name has (longer
+/// than the `.tmp` it has while written).
+const MAX_STEM: usize = 255 - ".json".len();
+
 /// The file of `thread` as of thread sequence `sequence`, in the encoding `flags`. The id goes
-/// in as hex, so none can name a path outside the store.
+/// in as hex, so none can name a path outside the store. One too long for that (a delegated
+/// task's runs to a few hundred bytes) goes in as `h` and its SHA-256: `h` is no hex digit, so
+/// the two never meet, and every name that fit before stays as it was.
 pub fn path(machine_dir: &Path, thread: &str, sequence: u64, flags: ThreadFlags) -> PathBuf {
-    let id: String = thread.bytes().map(|b| format!("{b:02x}")).collect();
-    dir(machine_dir).join(format!("{id}.{sequence}.{}.json", flags.key()))
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let stem = |id: String| format!("{id}.{sequence}.{}", flags.key());
+    let mut name = stem(hex(thread.as_bytes()));
+    if name.len() > MAX_STEM {
+        use sha2::Digest;
+        name = stem(format!("h{}", hex(&sha2::Sha256::digest(thread.as_bytes()))));
+    }
+    dir(machine_dir).join(format!("{name}.json"))
 }
 
 /// A chat the store should hold, and the file that holds it.
@@ -142,6 +154,24 @@ mod tests {
         let flags = ThreadFlags { dedupe_bodies: true, ..Default::default() };
         assert_eq!(path(root, "..", 7, flags), Path::new("/m/threads/2e2e.7.0010.json"));
         assert_eq!(path(root, "a/b", 12, ThreadFlags::default()), Path::new("/m/threads/612f62.12.0000.json"));
+    }
+
+    #[test]
+    fn long_thread_ids_still_make_a_file_name() {
+        let root = Path::new("/m");
+        let id = "thread:delegated-task:command%3Amcp%3Ab12c7108-9fea-4150-94f8-0800461507ec%3Adelegate-task%3Ad5cd1266-f8ba-471c-b876-47bb37b19da6";
+        let name_of = |id: &str, sequence: u64| {
+            let file = path(root, id, sequence, ThreadFlags::default());
+            file.file_name().unwrap().to_str().unwrap().to_owned()
+        };
+        let name = name_of(id, u64::MAX);
+        assert!(name.starts_with('h') && name.len() <= 255, "{name}");
+        assert_ne!(name, name_of(&format!("{id}x"), u64::MAX));
+        // Names that fit keep the hex they always had, so the chats already stored still open:
+        // the longest id that fits at sequence 1, and the same one at a sequence too long for it.
+        let fits = "a".repeat((MAX_STEM - ".1.0000".len()) / 2);
+        assert_eq!(name_of(&fits, 1), format!("{}.1.0000.json", "61".repeat(fits.len())));
+        assert!(name_of(&fits, 1000).starts_with('h'));
     }
 
     #[test]

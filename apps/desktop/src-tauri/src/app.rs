@@ -5,6 +5,7 @@ use crate::boat::{Boat, Starts};
 use crate::machine::signin::Agent;
 use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPhase};
 use crate::proxy;
+use crate::proxy::auth::Pairing;
 use crate::store::{Settings, Spend, State, Store};
 use crate::t3desktop::T3Desktop;
 use anyhow::{anyhow, bail, Context, Result};
@@ -403,9 +404,22 @@ impl App {
 
     /// Opens T3 Code's own "add backend" confirmation for this machine.
     pub fn pair(&self, machine: &MachineRuntime) -> Result<()> {
-        let code = machine.auth.new_pairing_code();
+        let code = machine.auth.new_pairing_code(Pairing::Desktop);
         let pairing_url = format!("http://localhost:{}/pair#token={code}", machine.record().local_port);
         open_url(&format!("t3code://pair?pairingUrl={}", urlencoding::encode(&pairing_url)))
+    }
+
+    /// The pairing URL that adds the machine to T3 Code on another of the user's devices (their
+    /// phone) through this computer's proxy, over Tailscale: there too it then answers while
+    /// asleep and wakes when used, while t3boat runs here. One-time, 15 minutes, and it replaces
+    /// such a code not used yet. Only once the proxy listens on the tailnet.
+    pub fn other_device_pairing_url(&self, machine: &MachineRuntime) -> Result<String> {
+        let port = machine.record().local_port;
+        let ip = crate::proxy::tailnet_address(port).ok_or_else(|| {
+            anyhow!("{} is not reachable over Tailscale: Tailscale must be connected on this computer", machine.record().name)
+        })?;
+        let code = machine.auth.new_pairing_code(Pairing::OtherDevice);
+        Ok(format!("http://{ip}:{port}/pair#token={code}"))
     }
 
     /// Refuses while work runs on the machine, unless `discard`. T3 Code offers no way to remove
