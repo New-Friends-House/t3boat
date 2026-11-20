@@ -100,7 +100,7 @@ async fn cors(req: Request, next: Next) -> Response {
 }
 
 fn client_authorized(m: &MachineRuntime, headers: &HeaderMap) -> bool {
-    auth::bearer(headers).is_some_and(|t| m.record().client_tokens.iter().any(|c| c == t))
+    auth::access_token(headers).is_some_and(|t| m.record().client_tokens.iter().any(|c| c == t))
 }
 
 fn unauthorized() -> Response {
@@ -367,8 +367,9 @@ async fn relay(m: &MachineRuntime, parts: Parts, body: Body, route: Relay) -> Re
         let url = format!("{}{}", m.upstream_url(), route.target);
         let mut rb = m.shared.http.request(parts.method.clone(), url).body(body.clone());
         for (k, v) in &parts.headers {
-            // The credential is the route's, and the body's length is what is sent here.
-            let replaced = k == header::AUTHORIZATION || k == header::CONTENT_LENGTH;
+            // The credential is the route's, and the body's length is what is sent here. A DPoP
+            // proof is bound to this proxy's URL, so the machine could only refuse it.
+            let replaced = k == header::AUTHORIZATION || k == header::CONTENT_LENGTH || k == "dpop";
             if !replaced && !HOP_BY_HOP.contains(&k.as_str()) {
                 rb = rb.header(k, v);
             }

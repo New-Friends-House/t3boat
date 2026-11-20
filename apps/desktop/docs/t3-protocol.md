@@ -145,6 +145,8 @@ The user clicks Confirm once.
 
 `OrchestrationProtocolHeaders` (`C:environmentHttp.ts:103-107`) means `authorization` plus `x-t3-orchestration-protocol: 2` (`C:environment.ts:13-16`, `CR:state/environmentHttpAuth.ts:33-37`). The server also gzips responses (`S:http.ts:252`).
 
+Since 0.1.11 the desktop client sends the token it got from `/oauth/token` as `Authorization: DPoP <token>` with a proof in a `dpop` header, even when `token_type` is `Bearer` (`clientRuntime.authorization.issueRemoteDpopWebSocketTicket`). "Bearer" in the table below means either scheme. A proxy that reads only `Bearer ` answers 401 right after pairing, and the client blocks the connection. The proof is bound to the URL it was made for, so drop it before relaying upstream with your own credential.
+
 | Method + path | Auth | Purpose | While asleep |
 |---|---|---|---|
 | `GET /.well-known/t3/environment` | none | descriptor / host check before every connect and route preflight | **must answer**: cached descriptor |

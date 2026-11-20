@@ -73,12 +73,12 @@ impl Auth {
     }
 }
 
-pub fn bearer(headers: &axum::http::HeaderMap) -> Option<&str> {
-    headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
+/// The access token a request carries, under either scheme T3 Code uses: `Bearer`, or `DPoP` (since
+/// 0.1.11) with a proof in the `dpop` header. The proof is not checked: the proxy serves loopback
+/// only, and its tokens were bearer tokens from the start, so the token alone stays the credential.
+pub fn access_token(headers: &axum::http::HeaderMap) -> Option<&str> {
+    let value = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("DPoP "))
 }
 
 #[cfg(test)]
@@ -97,5 +97,18 @@ mod tests {
         assert!(!auth.check_ticket(&media, TicketUse::Rpc));
         assert!(auth.check_ticket(&media, TicketUse::Media));
         assert!(auth.check_ticket(&media, TicketUse::Media), "a stream makes many requests");
+    }
+
+    #[test]
+    fn the_token_comes_under_either_scheme() {
+        let with = |value: &str| {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
+            access_token(&headers).map(str::to_owned)
+        };
+        assert_eq!(with("Bearer abc").as_deref(), Some("abc"));
+        assert_eq!(with("DPoP abc").as_deref(), Some("abc"));
+        assert_eq!(with("Basic abc"), None);
+        assert_eq!(access_token(&axum::http::HeaderMap::new()), None);
     }
 }
