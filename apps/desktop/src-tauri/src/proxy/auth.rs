@@ -27,25 +27,36 @@ pub enum TicketUse {
     Media,
 }
 
+/// Who a pairing code is for: T3 Code on this computer, or on another of the user's devices.
+/// Each has a code of its own, so pairing a phone leaves a pending desktop code alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pairing {
+    Desktop,
+    OtherDevice,
+}
+
 #[derive(Default)]
 pub struct Auth {
-    pairing: Mutex<Option<(String, Instant)>>,
+    pairing: Mutex<HashMap<String, (Pairing, Instant)>>,
     tickets: Mutex<HashMap<String, (TicketUse, Instant)>>,
 }
 
 impl Auth {
-    pub fn new_pairing_code(&self) -> String {
+    /// A new code for `who`; it replaces one for them not used yet.
+    pub fn new_pairing_code(&self, who: Pairing) -> String {
         let code = random_token();
-        *self.pairing.lock().unwrap() = Some((code.clone(), Instant::now() + PAIRING_TTL));
+        let mut codes = self.pairing.lock().unwrap();
+        codes.retain(|_, (w, _)| *w != who);
+        codes.insert(code.clone(), (who, Instant::now() + PAIRING_TTL));
         code
     }
 
-    /// One-time: a code works once.
-    pub fn redeem_pairing_code(&self, code: &str) -> bool {
-        let mut slot = self.pairing.lock().unwrap();
-        match slot.as_ref() {
-            Some((c, exp)) if c == code && Instant::now() < *exp => {
-                *slot = None;
+    /// One-time: a code works once, and only for whom it was made.
+    pub fn redeem_pairing_code(&self, code: &str, who: Pairing) -> bool {
+        let mut codes = self.pairing.lock().unwrap();
+        match codes.get(code) {
+            Some((w, exp)) if *w == who && Instant::now() < *exp => {
+                codes.remove(code);
                 true
             }
             _ => false,
@@ -74,8 +85,9 @@ impl Auth {
 }
 
 /// The access token a request carries, under either scheme T3 Code uses: `Bearer`, or `DPoP` (since
-/// 0.1.11) with a proof in the `dpop` header. The proof is not checked: the proxy serves loopback
-/// only, and its tokens were bearer tokens from the start, so the token alone stays the credential.
+/// 0.1.11) with a proof in the `dpop` header. The proof is not checked: the proxy serves this
+/// computer and the user's tailnet only, and its tokens were bearer tokens from the start, so the
+/// token alone stays the credential.
 pub fn access_token(headers: &axum::http::HeaderMap) -> Option<&str> {
     let value = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
     value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("DPoP "))
@@ -84,6 +96,20 @@ pub fn access_token(headers: &axum::http::HeaderMap) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pairing_code_works_once_and_only_for_its_device() {
+        let auth = Auth::default();
+        let desktop = auth.new_pairing_code(Pairing::Desktop);
+        let phone = auth.new_pairing_code(Pairing::OtherDevice);
+        let newer_phone = auth.new_pairing_code(Pairing::OtherDevice);
+        assert!(!auth.redeem_pairing_code(&phone, Pairing::OtherDevice), "replaced");
+        assert!(!auth.redeem_pairing_code(&newer_phone, Pairing::Desktop), "not this device's");
+        assert!(auth.redeem_pairing_code(&newer_phone, Pairing::OtherDevice), "still there");
+        assert!(!auth.redeem_pairing_code(&newer_phone, Pairing::OtherDevice), "used");
+        assert!(auth.redeem_pairing_code(&desktop, Pairing::Desktop));
+        assert!(!auth.redeem_pairing_code("", Pairing::Desktop));
+    }
 
     #[test]
     fn a_ticket_opens_only_what_it_was_issued_for() {

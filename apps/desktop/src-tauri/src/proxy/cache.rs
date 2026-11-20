@@ -81,8 +81,16 @@ pub struct Cache {
     pub streams: HashMap<String, Replay>,
     /// Unary success values by `request_key`.
     pub unary: HashMap<String, Answer>,
-    /// The thread snapshot encoding T3 Code last asked for: the one the capture stores chats in.
-    pub thread_encoding: Option<ThreadFlags>,
+    /// The thread snapshot encoding T3 Code last asked for, from before `thread_encodings`: read
+    /// as one of them.
+    thread_encoding: Option<ThreadFlags>,
+    /// The thread snapshot encodings clients asked for, with when (ms), most recent first: the
+    /// capture stores chats in each asked for within `STALE_AFTER`, so T3 Code here and on a
+    /// phone, of versions that encode differently, do not drop each other's.
+    thread_encodings: Vec<(ThreadFlags, i64)>,
+    /// When `thread_encodings` last went to disk (ms), in memory only.
+    #[serde(skip)]
+    thread_encodings_saved: i64,
     /// Deferred thread UI commands, sent on the next wake.
     pub deferred_commands: Vec<Value>,
     /// The last answer to `GET /api/voice/status`, which T3 Code reads on its own as it starts.
@@ -98,6 +106,38 @@ fn key_tag(key: &str) -> &str {
 }
 
 impl Cache {
+    /// A client asked for chats in the encoding `flags`. True when that is worth saving now: a
+    /// new encoding, or none saved for an hour (a save per chat opened would be many). The
+    /// caller saves; from then on the next is an hour away.
+    pub fn asked_thread_encoding(&mut self, flags: ThreadFlags) -> bool {
+        self.migrate_thread_encoding();
+        let now = now_ms();
+        let known = self.thread_encodings.iter().any(|(f, _)| *f == flags);
+        self.thread_encodings.retain(|(f, _)| *f != flags);
+        self.thread_encodings.insert(0, (flags, now));
+        let save = !known || now - self.thread_encodings_saved > 3_600_000;
+        if save {
+            self.thread_encodings_saved = now;
+        }
+        save
+    }
+
+    /// The encodings the capture stores chats in, most recently asked for first.
+    pub fn thread_encodings(&mut self) -> Vec<ThreadFlags> {
+        self.migrate_thread_encoding();
+        let cutoff = now_ms() - STALE_AFTER.num_milliseconds();
+        self.thread_encodings.retain(|(_, asked)| *asked >= cutoff);
+        self.thread_encodings.iter().map(|(f, _)| *f).collect()
+    }
+
+    fn migrate_thread_encoding(&mut self) {
+        if let Some(flags) = self.thread_encoding.take()
+            && !self.thread_encodings.iter().any(|(f, _)| *f == flags)
+        {
+            self.thread_encodings.push((flags, now_ms()));
+        }
+    }
+
     pub fn load(path: &Path) -> Self {
         std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
@@ -333,6 +373,27 @@ mod tests {
     use super::*;
 
     const CONFIG: &str = "subscribeServerConfig {}";
+
+    #[test]
+    fn keeps_every_encoding_asked_for_lately_newest_first() {
+        let all = ThreadFlags { defer_work: true, compact_turn_items: true, dedupe_bodies: true, compact_ids: true };
+        let fewer = ThreadFlags { compact_ids: false, ..all };
+        // A cache from before: one encoding, under its old name.
+        let mut c: Cache = serde_json::from_value(json!({"threadEncoding": all})).unwrap();
+        assert_eq!(c.thread_encodings(), vec![all]);
+        assert!(c.asked_thread_encoding(fewer), "new");
+        assert_eq!(c.thread_encodings(), vec![fewer, all]);
+        assert!(!c.asked_thread_encoding(all), "saved a moment ago");
+        // Asked for often, it still goes to disk hourly.
+        c.thread_encodings_saved -= 3_600_001;
+        assert!(c.asked_thread_encoding(all));
+        assert_eq!(c.thread_encodings(), vec![all, fewer]);
+        // One nobody asked for in a while is no longer stored.
+        c.thread_encodings[1].1 -= STALE_AFTER.num_milliseconds() + 1;
+        assert_eq!(c.thread_encodings(), vec![all]);
+        let saved: Cache = serde_json::from_value(serde_json::to_value(&c).unwrap()).unwrap();
+        assert_eq!(saved.thread_encodings.len(), 1);
+    }
 
     fn provider(id: &str, status: &str, models: Value) -> Value {
         json!({"instanceId": id, "displayName": id, "enabled": true, "auth": {"status": status}, "models": models})

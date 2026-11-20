@@ -29,8 +29,12 @@ pub struct Machine {
     /// `provision::revision()` of the scripts the machine runs.
     pub provision_revision: String,
     pub environment_id: String,
-    /// Bearer tokens the proxy issued to T3 Code when it paired.
+    /// Bearer tokens the proxy issued to T3 Code on this computer when it paired.
     pub client_tokens: Vec<String>,
+    /// Bearer tokens the proxy issued to T3 Code on the user's other devices (their phone), which
+    /// pair over Tailscale. Apart from `client_tokens`: they say nothing of the desktop app.
+    #[serde(default)]
+    pub device_tokens: Vec<String>,
     /// Bearer tokens the machine's server issued to T3 servers that linked to it through the
     /// proxy. The proxy only recognizes them: a call bearing one may wake the machine.
     pub link_tokens: Vec<LinkToken>,

@@ -176,11 +176,21 @@ impl MachineRuntime {
     /// most recently used first; a chat that is not stored wakes the machine when opened, and
     /// is fetched on a later sleep.
     async fn store_threads(&self, manifest: &Manifest, shell: &Value, deadline: tokio::time::Instant) {
-        // T3 Code opened no chat through this proxy yet: nothing says how to encode them.
-        let Some(flags) = self.cache.lock().unwrap().thread_encoding else { return };
-        let wanted = threads::plan(&self.dir, shell, &manifest.threads, flags, chrono::Utc::now());
-        let missing = wanted.iter().filter(|w| !w.path.exists());
-        let fetches = futures_util::stream::iter(missing).for_each_concurrent(THREAD_FETCHES, |w| async move {
+        // In every encoding a client asked for lately; none when no client opened a chat through
+        // this proxy lately, so nothing says how to encode them and the store empties. Chat by
+        // chat, each in every encoding, so no device's recent chats wait behind another's old.
+        let encodings = self.cache.lock().unwrap().thread_encodings();
+        let now = chrono::Utc::now();
+        let plans: Vec<Vec<_>> = encodings
+            .iter()
+            .map(|&flags| threads::plan(&self.dir, shell, &manifest.threads, flags, now))
+            .collect();
+        let chats = plans.iter().map(Vec::len).max().unwrap_or(0);
+        let wanted: Vec<_> = (0..chats)
+            .flat_map(|i| plans.iter().zip(&encodings).filter_map(move |(plan, flags)| Some((plan.get(i)?, *flags))))
+            .collect();
+        let missing = wanted.iter().filter(|(w, _)| !w.path.exists());
+        let fetches = futures_util::stream::iter(missing).for_each_concurrent(THREAD_FETCHES, |&(w, flags)| async move {
             let stored = async {
                 crate::store::write_private(&w.path, &self.fetch_thread(w.thread, w.sequence, flags).await?)
             };
@@ -191,7 +201,7 @@ impl MachineRuntime {
         if tokio::time::timeout_at(deadline, fetches).await.is_err() {
             tracing::info!("{}: not every chat stored before sleep", self.id());
         }
-        threads::sweep(&self.dir, &wanted.into_iter().map(|w| w.path).collect());
+        threads::sweep(&self.dir, &wanted.into_iter().map(|(w, _)| w.path.clone()).collect());
     }
 
     /// The chat's bounded snapshot, as of thread sequence `sequence`.

@@ -77,6 +77,8 @@ enum Call {
     SetAutoSleep { machine: String, on: bool },
     OpenInT3 { machine: String },
     AddToT3 { machine: String },
+    AddToPhone { machine: String },
+    RemoveFromPhones { machine: String },
     DeleteMachine {
         machine: String,
         #[serde(default)]
@@ -313,6 +315,26 @@ fn tool_list() -> Value {
             &["machine"],
         ),
         tool(
+            "add_to_phone",
+            "A one-time link (15 minutes) that adds this machine to T3 Code on another of the user's \
+             devices, their phone say, through t3boat on this computer over Tailscale: there too the \
+             machine then answers while asleep and wakes when used, instead of going unreachable as \
+             through T3 Connect. Needs Tailscale on both devices and t3boat running here. The phone \
+             app takes the pairing URL itself, pasted where it adds an environment (a `t3code://pair` \
+             link only opens the desktop app). If that device already has the machine (via T3 \
+             Connect), they add the URL as a route of it there and put that route first.",
+            json!({ "machine": machine }),
+            &["machine"],
+        ),
+        tool(
+            "remove_from_phones",
+            "Revokes every pairing add_to_phone made for this machine, e.g. for a lost or replaced \
+             phone: those devices can no longer reach it through this computer (T3 Code here keeps \
+             it). Pair again with add_to_phone.",
+            json!({ "machine": machine }),
+            &["machine"],
+        ),
+        tool(
             "delete_machine",
             "Permanently deletes a machine and everything on it, including work not pushed anywhere. Ask \
              the user first. Refuses while an agent or build is working there; `discard: true` deletes \
@@ -450,6 +472,17 @@ async fn run(app: &Arc<App>, call: Call) -> Result<String> {
             app.pair(&m)?;
             format!("T3 Code now asks the user to add {}; tell them to confirm.", m.record().name)
         }
+        Call::AddToPhone { machine } => {
+            let m = app.machine(&machine)?;
+            let url = app.other_device_pairing_url(&m)?;
+            format!("Pairing URL for {} (works once, for 15 minutes): {url}", m.record().name)
+        }
+        Call::RemoveFromPhones { machine } => {
+            let m = app.machine(&machine)?;
+            let removed = m.record().device_tokens.len();
+            m.update_record(|r| r.device_tokens.clear());
+            format!("Revoked {removed} phone pairing(s) of {}.", m.record().name)
+        }
         Call::DeleteMachine { machine, discard } => {
             let m = app.machine(&machine)?;
             let record = m.record();
@@ -584,7 +617,7 @@ mod tests {
     async fn lists_tools_and_rejects_unknown_methods() {
         let tools = rpc("tools/list", json!({})).await["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), 16);
+        assert_eq!(names.len(), 18);
         assert!(names.contains(&"sign_in_agent") && names.contains(&"delete_machine"));
         assert_eq!(rpc("ping", json!({})).await["result"], json!({}));
         assert_eq!(rpc("resources/list", json!({})).await["error"]["code"], -32601);

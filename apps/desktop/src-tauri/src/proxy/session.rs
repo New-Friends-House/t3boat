@@ -213,6 +213,13 @@ impl Session {
     async fn on_request(&mut self, req: Value) -> Result<()> {
         let tag = req["tag"].as_str().unwrap_or_default().to_owned();
         tracing::debug!(phase = ?self.phase, "rpc {tag}");
+        // Whatever becomes of the request (answered here, forwarded, held, dropped), the client
+        // opens chats this way: the capture stores them so.
+        if tag == "orchestration.subscribeThread"
+            && let Some(flags) = ThreadFlags::from_payload(&req["payload"])
+        {
+            self.m.note_thread_encoding(flags);
+        }
         let action = classify::is_user_action(&tag, &req["payload"]);
         match self.phase {
             // A machine about to freeze must not take new work: wait for it, then resume it on
@@ -255,11 +262,6 @@ impl Session {
         // Counted only when it reaches the machine: a call answered locally changes nothing.
         if classify::is_user_action(&tag, payload) {
             self.m.user_action();
-        }
-        if tag == "orchestration.subscribeThread"
-            && let Some(flags) = ThreadFlags::from_payload(payload)
-        {
-            self.m.cache.lock().unwrap().thread_encoding = Some(flags);
         }
         let epoch = self.m.cache.lock().unwrap().epoch;
         self.forwarded

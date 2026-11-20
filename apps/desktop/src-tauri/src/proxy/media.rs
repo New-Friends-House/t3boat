@@ -7,7 +7,7 @@
 //! opened by a person and wakes it.
 
 use super::auth::TicketUse;
-use super::{client_authorized, query_param, query_without, relay, unauthorized, upstream, upstream_bearer, wake, Relay, M};
+use super::{canonical_path, client_authorized, query_param, query_without, relay, unauthorized, upstream, upstream_bearer, wake, Relay, M};
 use crate::machine::{MachineRuntime, Power};
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{CloseFrame as DownClose, Message as DownMsg, WebSocket, WebSocketUpgrade};
@@ -59,21 +59,41 @@ pub(super) async fn socket(m: Arc<MachineRuntime>, upgrade: WebSocketUpgrade, pa
     }
     match upstream::connect(&m.upstream_url(), &m.upstream_token(), &target).await {
         Ok(up) => upgrade.on_upgrade(move |down| pump(m, down, up)),
-        // The machine's own refusal (no device hub, say) reaches T3 Code as it was.
+        // The machine's own refusal (no device hub, no server on a preview port, say) reaches
+        // T3 Code as it was, headers included: T3 Code reads the reason from them.
         Err(e) => match e.downcast_ref() {
-            Some(UpError::Http(res)) => res.status().into_response(),
+            Some(UpError::Http(res)) => {
+                let mut out = Response::builder().status(res.status());
+                for (k, v) in res.headers() {
+                    if !super::HOP_BY_HOP.contains(&k.as_str()) && k != axum::http::header::CONTENT_LENGTH {
+                        out = out.header(k, v);
+                    }
+                }
+                out.body(axum::body::Body::from(res.body().clone().unwrap_or_default()))
+                    .unwrap_or_else(|_| res.status().into_response())
+            }
             _ => (StatusCode::BAD_GATEWAY, format!("{e:#}")).into_response(),
         },
     }
 }
 
+/// What a media ticket opens, as T3's own: device and browser-preview streams, the tunnel to a
+/// web server running there (the phone's preview), and dictation.
+fn opens_with_media_ticket(path: &str) -> bool {
+    path.starts_with("/api/device-hub/")
+        || path.starts_with("/api/preview-stream/")
+        || matches!(path, "/api/preview/tunnel" | "/ws/voice")
+}
+
 /// Path and query on the machine, minus the proxy's ticket; `None` if the caller holds neither a
-/// media ticket nor a token of this proxy.
+/// media ticket for the path nor a token of this proxy.
 fn authorized_target(m: &MachineRuntime, parts: &Parts) -> Option<String> {
     let query = parts.uri.query().unwrap_or_default();
-    let ticketed = query_param(query, "wsTicket").is_some_and(|t| m.auth.check_ticket(&t, TicketUse::Media));
+    let path = canonical_path(&parts.uri);
+    let ticketed = opens_with_media_ticket(&path)
+        && query_param(query, "wsTicket").is_some_and(|t| m.auth.check_ticket(&t, TicketUse::Media));
     (ticketed || client_authorized(m, &parts.headers))
-        .then(|| format!("{}?{}", parts.uri.path(), query_without(query, &["wsTicket"])))
+        .then(|| format!("{path}?{}", query_without(query, &["wsTicket"])))
 }
 
 /// Passes frames both ways until either side ends, close code and reason included: T3 Code
