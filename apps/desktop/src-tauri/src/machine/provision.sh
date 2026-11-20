@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Runs on a Boat sandbox, as `user`. Idempotent; also used to upgrade a machine.
-#   T3BOAT_SECRET=<watchdog-secret> provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name>
-# Expects watchdog.mjs next to it. Prints one JSON line: {"environmentId", "upstreamToken"?}.
+#   T3BOAT_SECRET=<watchdog-secret> provision.sh <t3-version> <sleep-after-secs> <snapshot-name> <mint-upstream-token:0|1> <name> <cliproxy:0|1>
+# Expects watchdog.mjs and cliproxy.sh next to it. Prints one JSON line: {"environmentId", "upstreamToken"?}.
 set -euo pipefail
 
-version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5"
+version="$1" sleep_after="$2" snapshot="$3" mint_upstream="$4" name="$5" cliproxy="${6:-0}"
 secret="$T3BOAT_SECRET"
 here="$(cd "$(dirname "$0")" && pwd)"
 t3="$HOME/.local/bin/t3"
@@ -88,6 +88,9 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable t3boat-watchdog.service >/dev/null 2>&1
 systemctl --user restart t3boat-watchdog.service
+
+# The agents' model proxy, as the machine is set: on, or taken back out (a no-op if never on).
+if [ "$cliproxy" = 1 ]; then bash "$here/cliproxy.sh" on >/dev/null; else bash "$here/cliproxy.sh" off >/dev/null; fi
 
 upstream_token=""
 if [ "$mint_upstream" = 1 ]; then

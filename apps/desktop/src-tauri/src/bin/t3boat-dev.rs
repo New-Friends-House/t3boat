@@ -1,6 +1,7 @@
 //! Headless driver for development: runs the app model and proxies without the tray.
 //! Reads commands from stdin: list | create <name> [size] | pair <id> | wake <id> | sleep <id> |
-//! keep <id> [minutes] (keep awake; none: until stopped, 0 ends it) | connect <id> | delete <id> | costs
+//! keep <id> [minutes] (keep awake; none: until stopped, 0 ends it) | connect <id> | delete <id> | costs |
+//! cliproxy <id> on|off | signin <id> Claude|Codex | unsign <id> <account file> | details <id>
 
 use std::sync::Arc;
 use t3boat_lib::app::{self, App, Setup};
@@ -63,6 +64,14 @@ async fn command(app: &Arc<App>, words: &[String]) -> anyhow::Result<()> {
         Some("wake") => app.machine(&arg(1))?.ensure_awake().await?,
         Some("sleep") => app.machine(&arg(1))?.sleep_now().await?,
         Some("connect") => app.machine(&arg(1))?.turn_on_connect().await?,
+        Some("cliproxy") => app.machine(&arg(1))?.set_cliproxy(arg(2) == "on").await?,
+        Some("signin") => {
+            let agent = t3boat_lib::machine::signin::Agent::from_name(&arg(2))
+                .ok_or_else(|| anyhow::anyhow!("agent must be Claude or Codex"))?;
+            app.machine(&arg(1))?.sign_in(agent).await?
+        }
+        Some("unsign") => app.machine(&arg(1))?.remove_cliproxy_account(&arg(2)).await?,
+        Some("details") => println!("{}", serde_json::to_string_pretty(&app.details(&arg(1))?)?),
         Some("keep") => app.machine(&arg(1))?.keep_awake(words.get(2).map(|m| m.parse()).transpose()?).await?,
         Some("delete") => app.delete_machine(&*app.machine(&arg(1))?, arg(2) == "discard").await?,
         Some("costs") => {

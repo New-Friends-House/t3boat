@@ -80,11 +80,30 @@ export interface MachineDetails {
   costToday: number;
   costMonth: number;
   awakeSecsToday: number;
-  agents: { name: string; signedIn: boolean }[];
+  agents: AgentLogin[];
   t3Version: string;
   createdAt: number; // unix secs
   /** T3 Connect is on: the user's other devices reach it with their T3 account */
   connect: boolean;
+  /** its agents reach their models through CLIProxyAPI on the machine, with accounts signed in there */
+  cliproxy: boolean;
+}
+
+export interface AgentLogin {
+  name: string;
+  /** through CLIProxyAPI: it has an account there */
+  signedIn: boolean;
+  viaCliproxy: boolean;
+  /** its CLIProxyAPI accounts on the machine; empty unless viaCliproxy */
+  accounts: CliproxyAccount[];
+}
+
+/** An account signed in to a machine's CLIProxyAPI (its credential file there, never the token). */
+export interface CliproxyAccount {
+  file: string;
+  type: string; // "claude", "codex", ...
+  email: string | null;
+  disabled: boolean;
 }
 
 export type SetupAction = "installBoat" | "signInBoat" | "installT3" | "recheck";
@@ -101,7 +120,9 @@ export interface Commands {
   delete_machine: [{ id: string; discard?: boolean }, void];
   resize_machine: [{ id: string; size: string }, void];
   keep_awake: [{ id: string; minutes: number | null }, void]; // null: until stopped; 0: stop
-  sign_in_agent: [{ id: string; agent: string }, void];
+  sign_in_agent: [{ id: string; agent: string }, void]; // with CLIProxyAPI on: adds an account to it
+  set_cliproxy: [{ id: string; on: boolean }, void]; // wakes the machine; resolves once applied
+  remove_cliproxy_account: [{ id: string; file: string }, void];
   turn_on_connect: [{ id: string }, void]; // resolves once reachable, after the browser sign-in
   latest_thread: [{ id: string }, string | null]; // thread id
   get_machine_details: [{ id: string }, MachineDetails];

@@ -164,6 +164,13 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           await call("sign_in_agent", { id: m.id, agent: a.agent });
           toast(`${a.agent} is signed in on ${m.name}`, "info");
           return;
+        case "set_cliproxy":
+          await call("set_cliproxy", { id: m.id, on: a.on });
+          return;
+        case "remove_cliproxy_account":
+          await call("remove_cliproxy_account", { id: m.id, file: a.file });
+          toast(`${a.account} is signed out of ${m.name}`, "info");
+          return;
         case "turn_on_connect":
           await call("turn_on_connect", { id: m.id });
           toast(`${m.name} is reachable from your other devices`, "info");

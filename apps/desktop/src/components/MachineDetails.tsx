@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMachineDetails, useLatestThread } from "../api";
-import type { MachineDetails as Details, LocalProject, MachineView, Size } from "../types";
+import type { AgentLogin, CliproxyAccount, MachineDetails as Details, LocalProject, MachineView, Size } from "../types";
 import {
   ACTIONS,
+  addAccount,
   autoSleep,
   duration,
   hourly,
@@ -13,6 +14,7 @@ import {
   powerAction,
   openIn,
   primaryAction,
+  removeAccount,
   resizeHint,
   resizeTo,
   seedOf,
@@ -20,6 +22,7 @@ import {
   signInTo,
   sizeOf,
   timeLeft,
+  cliproxyMode,
   type Action,
 } from "../machine";
 import { AgentName } from "./AgentLogos";
@@ -287,12 +290,30 @@ function Agents({
   onAction: (a: Action) => void;
 }) {
   const [signingIn, setSigningIn] = useState<string | null>(null);
+  const gone = m.state === "missing";
+  const signIn = (agent: string, a: Action) => {
+    setSigningIn(agent);
+    onAction(a);
+  };
   return (
     <Section title="agents">
+      {d ? <CliproxyToggle m={m} on={d.cliproxy} pending={pending} onAction={onAction} /> : null}
       <ul className="lines">
         {d ? (
           d.agents.map((a) => {
             const running = signingIn === a.name && pending === signInTo(a.name).busy;
+            if (a.viaCliproxy) {
+              return (
+                <CliproxyAgent
+                  key={a.name}
+                  agent={a}
+                  running={running}
+                  disabled={!!pending || gone}
+                  onSignIn={() => signIn(a.name, addAccount(a.name))}
+                  onAction={onAction}
+                />
+              );
+            }
             return (
               <li key={a.name} className="line">
                 <span className="line-main">
@@ -305,12 +326,9 @@ function Agents({
                 ) : m.signedOut.includes(a.name) ? (
                   <button
                     className="btn btn-sm btn-outline"
-                    disabled={!!pending || m.state === "missing"}
+                    disabled={!!pending || gone}
                     aria-busy={running}
-                    onClick={() => {
-                      setSigningIn(a.name);
-                      onAction(signInTo(a.name));
-                    }}
+                    onClick={() => signIn(a.name, signInTo(a.name))}
                   >
                     {running ? (
                       <>
@@ -331,6 +349,118 @@ function Agents({
         )}
       </ul>
     </Section>
+  );
+}
+
+/** Claude and Codex through CLIProxyAPI on the machine, or through their own sign-ins there. */
+function CliproxyToggle({
+  m,
+  on: saved,
+  pending,
+  onAction,
+}: {
+  m: MachineView;
+  on: boolean;
+  pending: string | null;
+  onAction: (a: Action) => void;
+}) {
+  // optimistic, so the switch moves on click; the next details are the source of truth
+  const [want, setWant] = useState<boolean | null>(null);
+  const switching = pending === cliproxyMode(true).busy || pending === cliproxyMode(false).busy;
+  useEffect(() => {
+    if (!switching) setWant(null);
+  }, [switching]);
+  const on = want ?? saved;
+  return (
+    <label className="toggle">
+      <span className="toggle-text">
+        <span className="toggle-name">Through CLIProxyAPI</span>
+        <span className="hint">
+          {switching
+            ? on
+              ? "Setting it up on the machine…"
+              : "Switching back to their own sign-ins…"
+            : on
+              ? "Uses the accounts signed in to the proxy on this machine, even with this computer off"
+              : "Each agent uses its own sign-in on the machine"}
+        </span>
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        className="switch"
+        checked={on}
+        disabled={!!pending || m.state === "missing"}
+        onChange={(e) => {
+          setWant(e.target.checked);
+          onAction(cliproxyMode(e.target.checked));
+        }}
+      />
+    </label>
+  );
+}
+
+function CliproxyAgent({
+  agent: a,
+  running,
+  disabled,
+  onSignIn,
+  onAction,
+}: {
+  agent: AgentLogin;
+  running: boolean;
+  disabled: boolean;
+  onSignIn: () => void;
+  onAction: (a: Action) => void;
+}) {
+  return (
+    <>
+      <li className="line">
+        <span className="line-main">
+          <AgentName name={a.name} />
+        </span>
+        {a.accounts.length ? null : <span className="caption">no account</span>}
+        <button className="btn btn-sm btn-outline" disabled={disabled} aria-busy={running} onClick={onSignIn}>
+          {running ? (
+            <>
+              <Dots /> Signing in…
+            </>
+          ) : (
+            "Add account"
+          )}
+        </button>
+      </li>
+      {a.accounts.map((acct) => (
+        <CliproxyAccountLine key={acct.file} account={acct} disabled={disabled} onAction={onAction} />
+      ))}
+    </>
+  );
+}
+
+function CliproxyAccountLine({
+  account,
+  disabled,
+  onAction,
+}: {
+  account: CliproxyAccount;
+  disabled: boolean;
+  onAction: (a: Action) => void;
+}) {
+  const [armed, arm] = useArmed();
+  const name = account.email ?? account.file;
+  return (
+    <li className="line line-account">
+      <span className="line-main line-dim" title={name}>
+        {name}
+      </span>
+      <button
+        className={`btn btn-link${armed ? " is-danger" : ""}`}
+        disabled={disabled}
+        onClick={() => arm(() => onAction(removeAccount(account.file, name)))}
+      >
+        {armed ? "Sign out?" : "Remove"}
+      </button>
+    </li>
   );
 }
 

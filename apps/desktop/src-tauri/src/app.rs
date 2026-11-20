@@ -2,6 +2,7 @@
 //! both drive it.
 
 use crate::boat::{Boat, Starts};
+use crate::machine::signin::Agent;
 use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPhase};
 use crate::proxy;
 use crate::store::{Settings, Spend, State, Store};
@@ -595,6 +596,8 @@ pub struct MachineDetails {
     pub created_at: i64,
     /// T3 Connect is on: other devices reach it with the user's T3 account.
     pub connect: bool,
+    /// Its agents use CLIProxyAPI on the machine instead of their own sign-ins.
+    pub cliproxy: bool,
 }
 
 #[derive(Serialize)]
@@ -602,6 +605,10 @@ pub struct MachineDetails {
 pub struct AgentLogin {
     pub name: String,
     pub signed_in: bool,
+    /// Through the machine's CLIProxyAPI: then signed in means it has an account there.
+    pub via_cliproxy: bool,
+    /// Those accounts, when through CLIProxyAPI.
+    pub accounts: Vec<crate::store::CliproxyAccount>,
 }
 
 impl App {
@@ -617,15 +624,11 @@ impl App {
             cost_today: usage.today,
             cost_month: usage.month,
             awake_secs_today: usage.awake_secs_today,
-            // Only agents whose status is known, so this agrees with `signed_out` in the list.
-            agents: agents
-                .into_iter()
-                .filter(|(_, status)| matches!(status.as_str(), "authenticated" | "unauthenticated"))
-                .map(|(name, status)| AgentLogin { name, signed_in: status == "authenticated" })
-                .collect(),
-            t3_version: record.t3_version,
+            agents: agents.into_iter().filter_map(|(name, status)| agent_login(&record, name, &status)).collect(),
+            t3_version: record.t3_version.clone(),
             created_at: record.created_at,
             connect: record.connect,
+            cliproxy: record.cliproxy,
         })
     }
 
@@ -641,6 +644,35 @@ impl App {
             None => self.shared.t3.activate(),
         }
     }
+}
+
+/// Only agents whose status is known, so this agrees with `signed_out` in the list. Through
+/// CLIProxyAPI, T3 counts Claude as signed in whatever the proxy has, and can't tell for Codex:
+/// the proxy's accounts say.
+fn agent_login(record: &crate::store::Machine, name: String, status: &str) -> Option<AgentLogin> {
+    match Agent::from_name(&name).filter(|_| record.cliproxy) {
+        Some(agent) => {
+            let accounts = crate::machine::cliproxy::accounts_for(record, agent);
+            Some(AgentLogin { name, signed_in: !accounts.is_empty(), via_cliproxy: true, accounts })
+        }
+        None => matches!(status, "authenticated" | "unauthenticated").then(|| AgentLogin {
+            name,
+            signed_in: status == "authenticated",
+            via_cliproxy: false,
+            accounts: Vec::new(),
+        }),
+    }
+}
+
+/// Agents that need a sign-in there before they can work.
+fn signed_out(m: &MachineRuntime, record: &crate::store::Machine) -> Vec<String> {
+    let agents = m.cache.lock().unwrap().agents();
+    agents
+        .into_iter()
+        .filter_map(|(name, status)| agent_login(record, name, &status))
+        .filter(|a| !a.signed_in)
+        .map(|a| a.name)
+        .collect()
 }
 
 fn view(m: &MachineRuntime) -> MachineView {
@@ -692,7 +724,7 @@ fn view(m: &MachineRuntime) -> MachineView {
         detail,
         countdown,
         paired: !r.client_tokens.is_empty(),
-        signed_out: m.cache.lock().unwrap().signed_out_providers(),
+        signed_out: signed_out(m, &r),
         projects: m.projects(),
         keep_awake_until: running_watchdog
             .filter(|w| w.keep_awake_secs > 0)

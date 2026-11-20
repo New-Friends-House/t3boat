@@ -71,6 +71,7 @@ enum Call {
     ResizeMachine { machine: String, size: String },
     KeepAwake { machine: String, minutes: u32 },
     SignInAgent { machine: String, agent: String },
+    SetCliproxy { machine: String, on: bool },
     TurnOnConnect { machine: String },
     MachineDetails { machine: String },
     SetAutoSleep { machine: String, on: bool },
@@ -253,12 +254,24 @@ fn tool_list() -> Value {
             "sign_in_agent",
             "Signs a coding agent in on a machine with the vendor's own login. Opens the sign-in page in \
              the user's browser on this computer; the user must click Authorize there, so tell them to. \
-             The credential is created on the machine; this computer's logins are not touched.",
+             The credential is created on the machine; this computer's logins are not touched. On a \
+             machine using CLIProxyAPI (set_cliproxy), it adds another account of that vendor to the \
+             proxy there instead.",
             json!({
                 "machine": machine,
                 "agent": { "type": "string", "enum": ["Claude", "Codex"] },
             }),
             &["machine", "agent"],
+        ),
+        tool(
+            "set_cliproxy",
+            "Makes a machine's Claude and Codex reach their models through CLIProxyAPI running on the \
+             machine itself (on), or through their own sign-ins again (off). The proxy spreads their \
+             requests over the accounts signed in to it there; add one with sign_in_agent. Accounts \
+             are signed in per machine, never copied: their refresh tokens are single-use. Wakes the \
+             machine; off keeps its accounts for next time.",
+            json!({ "machine": machine, "on": { "type": "boolean" } }),
+            &["machine", "on"],
         ),
         tool(
             "turn_on_connect",
@@ -273,7 +286,8 @@ fn tool_list() -> Value {
         tool(
             "machine_details",
             "One machine's cost today and this month, time awake today, which agents are signed in \
-             there, its T3 version and creation time, and whether T3 Connect is on. Never wakes it.",
+             there (and through which CLIProxyAPI accounts, when it uses one), its T3 version and \
+             creation time, and whether T3 Connect is on. Never wakes it.",
             json!({ "machine": machine }),
             &["machine"],
         ),
@@ -320,6 +334,9 @@ impl Call {
             Self::SignInAgent { machine, agent } => format!(
                 "The {agent} sign-in for {machine} is open in the browser; the user must click Authorize. \
                  list_machines stops listing {agent} under signedOut once done."
+            ),
+            Self::SetCliproxy { machine, .. } => format!(
+                "Still setting CLIProxyAPI up on {machine}; machine_details shows its agents' accounts once done."
             ),
             Self::AddProject { machine, project } => format!(
                 "Still cloning {project} onto {machine}; list_machines shows its progress under the machine's projects."
@@ -396,6 +413,18 @@ async fn run(app: &Arc<App>, call: Call) -> Result<String> {
             let m = app.machine(&machine)?;
             m.sign_in(a).await?;
             format!("{agent} is signed in on {}.", m.record().name)
+        }
+        Call::SetCliproxy { machine, on } => {
+            let m = app.machine(&machine)?;
+            m.set_cliproxy(on).await?;
+            let name = m.record().name;
+            match on {
+                true if m.record().cliproxy_accounts.is_empty() => format!(
+                    "{name}'s agents now use CLIProxyAPI there, which has no account yet: add one with sign_in_agent."
+                ),
+                true => format!("{name}'s agents now use CLIProxyAPI there."),
+                false => format!("{name}'s agents use their own sign-ins again."),
+            }
         }
         Call::TurnOnConnect { machine } => {
             let m = app.machine(&machine)?;
@@ -555,7 +584,7 @@ mod tests {
     async fn lists_tools_and_rejects_unknown_methods() {
         let tools = rpc("tools/list", json!({})).await["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 16);
         assert!(names.contains(&"sign_in_agent") && names.contains(&"delete_machine"));
         assert_eq!(rpc("ping", json!({})).await["result"], json!({}));
         assert_eq!(rpc("resources/list", json!({})).await["error"]["code"], -32601);

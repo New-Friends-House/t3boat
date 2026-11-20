@@ -2,6 +2,7 @@
 //! capturing its final state when it goes to sleep.
 
 mod capture;
+pub mod cliproxy;
 mod connect;
 mod link;
 pub mod projects;
@@ -15,7 +16,7 @@ use crate::proxy::cache::{self, Cache};
 use crate::proxy::classify;
 use crate::proxy::threads;
 use crate::proxy::upstream;
-use crate::store::{Machine, Settings};
+use crate::store::{CliproxyAccount, Machine, Settings};
 use crate::t3desktop::T3Desktop;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -110,6 +111,10 @@ pub struct WatchdogStatus {
     /// That is soon: the machine waits for it instead of sleeping.
     #[serde(default)]
     pub work_due: bool,
+    /// The accounts signed in to CLIProxyAPI there; none when it was never set up or the
+    /// watchdog is older.
+    #[serde(default)]
+    pub cliproxy_accounts: Option<Vec<CliproxyAccount>>,
     pub manifest: Option<Manifest>,
     /// When this app got the status: what its second counts are relative to.
     #[serde(skip, default = "SystemTime::now")]
@@ -555,6 +560,7 @@ impl MachineRuntime {
             &record.watchdog_secret,
             &provision::snapshot_name(&record.name, &record.id),
             false,
+            record.cliproxy,
         )
         .await?;
         self.update_record(|m| {
@@ -807,6 +813,11 @@ impl MachineRuntime {
         }
         if self.record.read().unwrap().next_due_at != s.next_due_at {
             self.update_record(|r| r.next_due_at = s.next_due_at);
+        }
+        if let Some(accounts) = &s.cliproxy_accounts
+            && self.record.read().unwrap().cliproxy_accounts != *accounts
+        {
+            self.update_record(|r| r.cliproxy_accounts = accounts.clone());
         }
         let manifest = s.manifest.clone();
         let phase = s.phase;
