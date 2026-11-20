@@ -105,7 +105,7 @@ pub async fn token(State(m): M, req: Request) -> Response {
 pub async fn mcp(State(m): M, req: Request) -> Response {
     let (parts, body) = req.into_parts();
     let now = chrono::Utc::now().timestamp();
-    let linked = auth::bearer(&parts.headers)
+    let linked = auth::access_token(&parts.headers)
         .is_some_and(|t| m.record().link_tokens.iter().any(|l| l.token == t && l.expires_at > now));
     let call = linked && parts.method == Method::POST;
     let Ok(body) = axum::body::to_bytes(body, super::MAX_BODY).await else {
