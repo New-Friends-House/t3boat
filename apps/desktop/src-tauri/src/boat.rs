@@ -243,52 +243,6 @@ impl Boat {
         let to = format!("{id}:{remote_path}");
         self.run(&["scp", path_str(local)?, &to], Duration::from_secs(1800)).await.map(drop)
     }
-
-    /// Forwards `port` on this computer to the same port in the sandbox, for as long as the
-    /// returned `Forward` lives.
-    pub async fn forward(&self, id: &str, port: u16) -> Result<Forward> {
-        // Else another listener on the port would pass the readiness check below.
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
-            bail!("port {port} is in use on this computer; finish or close the other sign-in first");
-        }
-        let p = port.to_string();
-        let mut cmd = command(&self.bin);
-        cmd.args(["forward", id, "--remote", &p, "--local", &p])
-            .env("BOAT_NO_UPDATE", "1")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
-        // A group of its own, so the end of the forward reaches the ssh the CLI runs too.
-        #[cfg(unix)]
-        cmd.process_group(0);
-        let mut forward = Forward(cmd.spawn().context("running boat forward")?);
-        for _ in 0..100 {
-            if let Some(status) = forward.0.try_wait()? {
-                bail!("boat forward exited ({status}); is port {port} free on this computer?");
-            }
-            if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
-                return Ok(forward);
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        bail!("boat forward did not open port {port}")
-    }
-}
-
-/// A running `boat forward`; dropping it ends the tunnel. The CLI runs ssh for it, which would
-/// outlive the CLI alone and keep the port taken, failing the next sign-in on it.
-pub struct Forward(tokio::process::Child);
-
-impl Drop for Forward {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Some(pid) = self.0.id().and_then(|p| i32::try_from(p).ok()) {
-            // SAFETY: a plain syscall; the group is the CLI's own (`process_group(0)`).
-            unsafe { libc::kill(-pid, libc::SIGTERM) };
-        }
-        // Elsewhere, and in case the group outlived the signal: the CLI itself.
-        let _ = self.0.start_kill();
-    }
 }
 
 /// What a failed command said: its stderr, else its stdout.

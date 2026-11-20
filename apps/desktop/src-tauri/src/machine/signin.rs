@@ -1,9 +1,10 @@
 //! Signing an agent in on a machine with the vendor's own CLI login, or, on a machine whose agents
 //! use CLIProxyAPI, adding an account to the proxy there with its own login. Either login runs on
-//! the machine and its localhost callback port is forwarded to this computer, so the browser's
-//! redirect after "Authorize" lands on the machine: no code to paste, and the credential is
-//! created on the machine and stays there. This computer's own logins are never touched.
+//! the machine; this app takes the browser's redirect after "Authorize" on the same localhost port
+//! and passes it on to the machine (`callback`): no code to paste, and the credential is created on
+//! the machine and stays there. This computer's own logins are never touched.
 
+use super::callback::Relay;
 use super::MachineRuntime;
 use crate::proxy::upstream;
 use anyhow::{anyhow, bail, Context, Result};
@@ -161,10 +162,9 @@ impl MachineRuntime {
             tokio::time::sleep(Duration::from_millis(300)).await;
         };
         let port = callback_port(&url).ok_or_else(|| anyhow!("the {agent:?} login has no local callback"))?;
-        let _forward = boat
-            .forward(&id, port)
+        let _relay = Relay::start(boat.clone(), id.clone(), port)
             .await
-            .with_context(|| format!("forwarding port {port} for the {agent:?} login"))?;
+            .with_context(|| format!("taking the {agent:?} sign-in's redirect on port {port}"))?;
         crate::app::open_url(&url)?;
         loop {
             tokio::time::sleep(Duration::from_secs(3)).await;
