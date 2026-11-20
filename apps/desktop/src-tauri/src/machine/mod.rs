@@ -1,6 +1,7 @@
 //! One remote machine at runtime: its power state on Boat, its watchdog, waking it on demand and
 //! capturing its final state when it goes to sleep.
 
+mod callback;
 mod capture;
 pub mod cliproxy;
 mod connect;
