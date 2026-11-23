@@ -42,12 +42,21 @@ const BACKGROUND_PROBES: &[&str] = &[
 /// typed one. `server.refreshProviders` reloads the secrets only for the Refresh button of
 /// the provider settings.
 pub fn is_background_probe(tag: &str, payload: &Value) -> bool {
-    BACKGROUND_PROBES.contains(&tag)
-        && match tag {
-            "server.searchAcpRegistry" => payload["query"] == "",
-            "server.refreshProviders" => payload["reloadSecrets"] != true,
-            _ => true,
-        }
+    is_icon_candidates(tag, payload)
+        || BACKGROUND_PROBES.contains(&tag)
+            && match tag {
+                "server.searchAcpRegistry" => payload["query"] == "",
+                "server.refreshProviders" => payload["reloadSecrets"] != true,
+                _ => true,
+            }
+}
+
+/// The image files a project's settings page lists for its icon picker as soon as the page opens,
+/// picker shown or not: every image of the project, an empty `query`. Typed into, the picker
+/// searches, and every other file search (a chat's `@`, a file picker) is a person's: those wake
+/// the machine.
+fn is_icon_candidates(tag: &str, payload: &Value) -> bool {
+    tag == "projects.searchEntries" && payload["imageOnly"] == true && payload["query"] == ""
 }
 
 /// Thread UI writes that may wait for the next wake; the server dedupes them by `commandId`.
@@ -116,6 +125,7 @@ fn is_device_list_action(tag: &str, payload: &Value) -> bool {
 pub fn recorded_unary(tag: &str, payload: &Value) -> bool {
     !is_device_list_action(tag, payload)
         && (BACKGROUND_PROBES.contains(&tag)
+            || is_icon_candidates(tag, payload)
             || matches!(
                 tag,
                 "server.getConfig"
@@ -474,6 +484,24 @@ mod tests {
         assert!(BACKGROUND_PROBES.contains(&"assets.createUrl"));
         assert!(recorded_unary("assets.createUrl", &json!({})));
         assert!(!is_user_action("assets.createUrl", &json!({})));
+    }
+
+    #[test]
+    fn a_projects_icon_candidates_never_wake_and_a_file_search_does() {
+        // What the project settings page sends as it opens, whether or not the picker is open.
+        let candidates = json!({"cwd": "/w", "query": "", "limit": 200, "kind": "file", "imageOnly": true});
+        let tag = "projects.searchEntries";
+        assert!(is_background_probe(tag, &candidates) && recorded_unary(tag, &candidates));
+        assert!(!is_user_action(tag, &candidates));
+        for asked in [
+            // Typed into the icon picker.
+            json!({"cwd": "/w", "query": "logo", "limit": 200, "kind": "file", "imageOnly": true}),
+            // A chat's `@` and the project file picker.
+            json!({"cwd": "/w", "query": "", "limit": 200, "kind": "file"}),
+            json!({"cwd": "/w", "query": "src/ma", "limit": 25, "kind": "file"}),
+        ] {
+            assert!(!is_background_probe(tag, &asked) && !recorded_unary(tag, &asked), "{asked}");
+        }
     }
 
     #[test]
