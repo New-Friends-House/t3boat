@@ -9,11 +9,12 @@ import type { CliproxyAccount, CommandArgs, CommandName, LocalProject, MachineDe
 
 const params = new URLSearchParams(location.search);
 
-type Seed = Omit<MachineView, "countdown" | "signedOut" | "projects" | "keepAwakeUntil" | "keepAwakeForever"> &
+type Seed = Omit<MachineView, "countdown" | "signedOut" | "codeWanted" | "projects" | "keepAwakeUntil" | "keepAwakeForever"> &
   Partial<Pick<MachineView, "countdown" | "signedOut" | "projects">>;
 const machine = (m: Seed): MachineView => ({
   countdown: null,
   signedOut: [],
+  codeWanted: null,
   projects: [],
   keepAwakeUntil: null,
   keepAwakeForever: false,
@@ -81,6 +82,9 @@ const connectOn = new Set(["sb_7f2a"]);
 const cliproxyOn = new Set<string>();
 const cliproxyAccounts: Record<string, CliproxyAccount[]> = {};
 const agentType = (agent: string) => agent.toLowerCase();
+/** Machines with Antigravity signed in, and the Antigravity sign-ins waiting for their code. */
+const antigravitySignedIn = new Set<string>();
+const codeWaits: Record<string, (code: string | null) => void> = {};
 const cliproxySignedOut = (id: string) =>
   ["Claude", "Codex"].filter((a) => !(cliproxyAccounts[id] ?? []).some((x) => x.type === agentType(a)));
 
@@ -267,6 +271,18 @@ function create(): MockBackend {
     },
 
     async sign_in_agent({ id, agent }) {
+      if (agent === "Antigravity") {
+        await wait(2500); // turned on, installed, Google's page opens
+        patch(id, { codeWanted: agent });
+        const code = await new Promise<string | null>((resolve) => (codeWaits[id] = resolve));
+        delete codeWaits[id];
+        patch(id, { codeWanted: null });
+        if (code === null) throw "sign-in cancelled";
+        await wait(1500);
+        antigravitySignedIn.add(id);
+        emit();
+        return;
+      }
       await wait(3000);
       if (cliproxyOn.has(id)) {
         const list = (cliproxyAccounts[id] ??= []);
@@ -276,6 +292,14 @@ function create(): MockBackend {
         return;
       }
       patch(id, { signedOut: find(id).signedOut.filter((a) => a !== agent) });
+    },
+
+    async answer_sign_in({ id, code }) {
+      const answer = codeWaits[id];
+      if (!answer) throw "no sign-in on this machine waits for a code";
+      await wait(500);
+      if (code !== null && !/^[\w./~-]{1,2048}$/.test(code)) throw "Paste the code from the Antigravity page, or that page's full URL.";
+      answer(code);
     },
 
     async set_cliproxy({ id, on }) {
@@ -335,10 +359,14 @@ function create(): MockBackend {
         costToday,
         costMonth: extra.month + costToday,
         awakeSecsToday: awake,
-        agents: ["Claude", "Codex"].map((name) => {
-          const accounts = cliproxyOn.has(id) ? (cliproxyAccounts[id] ?? []).filter((a) => a.type === agentType(name)) : [];
-          return { name, signedIn: !m.signedOut.includes(name), viaCliproxy: cliproxyOn.has(id), accounts };
-        }),
+        agents: [
+          ...["Claude", "Codex"].map((name) => {
+            const accounts = cliproxyOn.has(id) ? (cliproxyAccounts[id] ?? []).filter((a) => a.type === agentType(name)) : [];
+            return { name, signedIn: !m.signedOut.includes(name), viaCliproxy: cliproxyOn.has(id), accounts };
+          }),
+          // never through CLIProxyAPI: T3's own Google sign-in
+          { name: "Antigravity", signedIn: antigravitySignedIn.has(id), viaCliproxy: false, accounts: [] },
+        ],
         t3Version: "0.0.21",
         createdAt: Math.floor(Date.now() / 1000) - extra.days * 86400,
         connect: connectOn.has(id),

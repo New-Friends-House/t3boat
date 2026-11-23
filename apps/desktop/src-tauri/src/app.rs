@@ -2,6 +2,7 @@
 //! both drive it.
 
 use crate::boat::{Boat, Starts};
+use crate::machine::antigravity;
 use crate::machine::signin::Agent;
 use crate::machine::{provision, Event, MachineRuntime, Power, Shared, WatchdogPhase};
 use crate::proxy;
@@ -70,6 +71,8 @@ pub struct MachineView {
     pub paired: bool,
     /// Agents that need a sign-in on this machine (done in T3 Code, per machine).
     pub signed_out: Vec<String>,
+    /// The agent whose sign-in waits for the code its page shows, pasted here (`answer_sign_in`).
+    pub code_wanted: Option<&'static str>,
     /// Its T3 projects as last seen, and those being added (with their progress).
     pub projects: Vec<crate::machine::projects::MachineProject>,
     /// When a "keep awake" runs out (unix ms); none when off or until stopped.
@@ -489,6 +492,7 @@ impl App {
                 countdown: None,
                 paired: false,
                 signed_out: Vec::new(),
+                code_wanted: None,
                 projects: Vec::new(),
                 keep_awake_until: None,
                 keep_awake_forever: false,
@@ -660,29 +664,29 @@ impl App {
     }
 }
 
-/// Only agents whose status is known, so this agrees with `signed_out` in the list. Through
-/// CLIProxyAPI, T3 counts Claude as signed in whatever the proxy has, and can't tell for Codex:
-/// the proxy's accounts say.
+/// Only agents whose status is known, so this agrees with `signed_out` in the list, and
+/// Antigravity whatever its status: off or not installed yet, its sign-in here sets it up.
+/// Through CLIProxyAPI, T3 counts Claude as signed in whatever the proxy has, and can't tell for
+/// Codex: the proxy's accounts say. Antigravity never goes through the proxy.
 fn agent_login(record: &crate::store::Machine, name: String, status: &str) -> Option<AgentLogin> {
     match Agent::from_name(&name).filter(|_| record.cliproxy) {
         Some(agent) => {
             let accounts = crate::machine::cliproxy::accounts_for(record, agent);
             Some(AgentLogin { name, signed_in: !accounts.is_empty(), via_cliproxy: true, accounts })
         }
-        None => matches!(status, "authenticated" | "unauthenticated").then(|| AgentLogin {
-            name,
-            signed_in: status == "authenticated",
-            via_cliproxy: false,
-            accounts: Vec::new(),
+        None => (matches!(status, "authenticated" | "unauthenticated") || name == antigravity::NAME).then(|| {
+            AgentLogin { name, signed_in: status == "authenticated", via_cliproxy: false, accounts: Vec::new() }
         }),
     }
 }
 
-/// Agents that need a sign-in there before they can work.
+/// Agents that need a sign-in there before they can work. Antigravity only once T3 says it is
+/// signed out: off, nothing needs it.
 fn signed_out(m: &MachineRuntime, record: &crate::store::Machine) -> Vec<String> {
     let agents = m.cache.lock().unwrap().agents();
     agents
         .into_iter()
+        .filter(|(name, status)| name != antigravity::NAME || status == "unauthenticated")
         .filter_map(|(name, status)| agent_login(record, name, &status))
         .filter(|a| !a.signed_in)
         .map(|a| a.name)
@@ -739,6 +743,7 @@ fn view(m: &MachineRuntime) -> MachineView {
         countdown,
         paired: !r.client_tokens.is_empty(),
         signed_out: signed_out(m, &r),
+        code_wanted: m.code_wanted(),
         projects: m.projects(),
         keep_awake_until: running_watchdog
             .filter(|w| w.keep_awake_secs > 0)

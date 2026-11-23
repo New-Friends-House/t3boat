@@ -2,7 +2,8 @@
 //! use CLIProxyAPI, adding an account to the proxy there with its own login. Either login runs on
 //! the machine; this app takes the browser's redirect after "Authorize" on the same localhost port
 //! and passes it on to the machine (`callback`): no code to paste, and the credential is created on
-//! the machine and stays there. This computer's own logins are never touched.
+//! the machine and stays there. This computer's own logins are never touched. Antigravity signs in
+//! with T3's own sign-in instead (`antigravity`).
 
 use super::callback::Relay;
 use super::MachineRuntime;
@@ -106,6 +107,16 @@ const CLIPROXY_BIN: &str = "\"$HOME/.t3boat/cliproxy/bin/cli-proxy-api\"";
 const CLIPROXY_CONFIG: &str = "\"$HOME/.t3boat/cliproxy/config.yaml\"";
 
 impl MachineRuntime {
+    /// The sign-in for an agent by the name the agents list shows: Antigravity's is T3's own,
+    /// whether or not the machine uses CLIProxyAPI; Claude's and Codex's are `sign_in`.
+    pub async fn sign_in_agent(&self, name: &str) -> Result<()> {
+        if name == super::antigravity::NAME {
+            return self.sign_in_antigravity().await;
+        }
+        let agent = Agent::from_name(name).ok_or_else(|| anyhow!("no sign-in for {name}: Claude, Codex or Antigravity"))?;
+        self.sign_in(agent).await
+    }
+
     /// On a machine whose agents use CLIProxyAPI, this adds an account to the proxy there.
     pub async fn sign_in(&self, agent: Agent) -> Result<()> {
         self.ensure_awake().await?;

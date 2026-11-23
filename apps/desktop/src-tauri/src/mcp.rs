@@ -3,7 +3,7 @@
 //! (they could run the Boat CLI anyway); Host and Origin checks keep web pages out.
 
 use crate::app::App;
-use crate::machine::signin::Agent;
+use crate::machine::antigravity;
 use anyhow::{anyhow, bail, Context, Result};
 use axum::extract::State;
 use axum::http::header::{HOST, ORIGIN};
@@ -71,6 +71,7 @@ enum Call {
     ResizeMachine { machine: String, size: String },
     KeepAwake { machine: String, minutes: u32 },
     SignInAgent { machine: String, agent: String },
+    AnswerSignIn { machine: String, code: Option<String> },
     SetCliproxy { machine: String, on: bool },
     TurnOnConnect { machine: String },
     MachineDetails { machine: String },
@@ -257,13 +258,27 @@ fn tool_list() -> Value {
             "Signs a coding agent in on a machine with the vendor's own login. Opens the sign-in page in \
              the user's browser on this computer; the user must click Authorize there, so tell them to. \
              The credential is created on the machine; this computer's logins are not touched. On a \
-             machine using CLIProxyAPI (set_cliproxy), it adds another account of that vendor to the \
-             proxy there instead.",
+             machine using CLIProxyAPI (set_cliproxy), Claude and Codex get another account of that \
+             vendor in the proxy there instead. Antigravity signs in with T3's own Google sign-in, \
+             never through CLIProxyAPI, and is turned on and installed there first: the Google page \
+             ends on an Antigravity page with a code, which the user pastes into t3boat (the machine's \
+             row or details) or gives you for answer_sign_in.",
             json!({
                 "machine": machine,
-                "agent": { "type": "string", "enum": ["Claude", "Codex"] },
+                "agent": { "type": "string", "enum": ["Claude", "Codex", "Antigravity"] },
             }),
             &["machine", "agent"],
+        ),
+        tool(
+            "answer_sign_in",
+            "Hands an Antigravity sign-in started with sign_in_agent the code its Antigravity page \
+             showed the user. Fails with what T3 says when the code is not accepted; the sign-in then \
+             still waits for the right one. Without a code, cancels the sign-in.",
+            json!({
+                "machine": machine,
+                "code": { "type": "string", "description": "The code from the Antigravity page, or that page's full URL" },
+            }),
+            &["machine"],
         ),
         tool(
             "set_cliproxy",
@@ -353,6 +368,11 @@ impl Call {
                 "Creating {name}, about a minute. list_machines shows its progress. When it is ready, \
                  T3 Code asks the user to add it as a backend."
             ),
+            Self::SignInAgent { machine, agent } if agent == antigravity::NAME => format!(
+                "Setting Antigravity up on {machine}, then its Google sign-in opens in the browser. The \
+                 user signs in, then pastes the code the Antigravity page shows into t3boat, or gives it \
+                 to you for answer_sign_in. machine_details shows Antigravity signed in once done."
+            ),
             Self::SignInAgent { machine, agent } => format!(
                 "The {agent} sign-in for {machine} is open in the browser; the user must click Authorize. \
                  list_machines stops listing {agent} under signedOut once done."
@@ -431,10 +451,18 @@ async fn run(app: &Arc<App>, call: Call) -> Result<String> {
             format!("{} is set to {size}; it applies when it next wakes (right away if it was idle).", m.record().name)
         }
         Call::SignInAgent { machine, agent } => {
-            let a = Agent::from_name(&agent).ok_or_else(|| anyhow!("agent must be Claude or Codex"))?;
             let m = app.machine(&machine)?;
-            m.sign_in(a).await?;
+            m.sign_in_agent(&agent).await?;
             format!("{agent} is signed in on {}.", m.record().name)
+        }
+        Call::AnswerSignIn { machine, code } => {
+            let m = app.machine(&machine)?;
+            let cancel = code.is_none();
+            m.answer_sign_in(code).await?;
+            match cancel {
+                true => format!("The sign-in on {} is cancelled.", m.record().name),
+                false => format!("T3 took the code; {} finishes the sign-in now.", m.record().name),
+            }
         }
         Call::SetCliproxy { machine, on } => {
             let m = app.machine(&machine)?;
@@ -617,7 +645,7 @@ mod tests {
     async fn lists_tools_and_rejects_unknown_methods() {
         let tools = rpc("tools/list", json!({})).await["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), 18);
+        assert_eq!(names.len(), 19);
         assert!(names.contains(&"sign_in_agent") && names.contains(&"delete_machine"));
         assert_eq!(rpc("ping", json!({})).await["result"], json!({}));
         assert_eq!(rpc("resources/list", json!({})).await["error"]["code"], -32601);

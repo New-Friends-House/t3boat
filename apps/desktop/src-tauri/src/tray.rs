@@ -447,12 +447,17 @@ fn get_machine_details(ui: State<'_, Ui>, id: String) -> Res<app::MachineDetails
     ui.app()?.details(&id).map_err(err)
 }
 
-/// Signs an agent in on the machine through the vendor's own login in the browser.
+/// Signs an agent in on the machine through the vendor's own login in the browser; Antigravity
+/// through T3's, which waits for the code its page shows (`answer_sign_in`).
 #[tauri::command]
 async fn sign_in_agent(ui: State<'_, Ui>, id: String, agent: String) -> Res {
-    let agent = crate::machine::signin::Agent::from_name(&agent)
-        .ok_or_else(|| format!("{agent} has to be signed in from T3 Code's settings"))?;
-    ui.app()?.machine(&id).map_err(err)?.sign_in(agent).await.map_err(err)
+    ui.app()?.machine(&id).map_err(err)?.sign_in_agent(&agent).await.map_err(err)
+}
+
+/// The code a sign-in's page showed, for the sign-in waiting for it; `None` cancels it.
+#[tauri::command]
+async fn answer_sign_in(ui: State<'_, Ui>, id: String, code: Option<String>) -> Res {
+    ui.app()?.machine(&id).map_err(err)?.answer_sign_in(code).await.map_err(err)
 }
 
 /// Turns CLIProxyAPI on or off for the machine's agents, waking it to do so.
@@ -599,6 +604,7 @@ pub fn run() {
             resize_machine,
             keep_awake,
             sign_in_agent,
+            answer_sign_in,
             set_cliproxy,
             remove_cliproxy_account,
             turn_on_connect,
