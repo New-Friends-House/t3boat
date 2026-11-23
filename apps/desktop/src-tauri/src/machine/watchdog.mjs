@@ -291,10 +291,26 @@ function hold(reason) {
   manifest = null;
 }
 
-/** Runs the Boat CLI, in a login shell for its PATH. */
+/**
+ * This sandbox's id, from the token Boat keeps in the login shell for it: the sandbox it was
+ * issued to, so it follows a restore. Run there by `node -e`.
+ */
+const SANDBOX_FROM_TOKEN = `
+  try {
+    const claims = (process.env.ASCII_TOKEN || "").split(".")[1] || "";
+    process.stdout.write(String(JSON.parse(Buffer.from(claims, "base64url")).boxId || ""));
+  } catch {}
+`;
+
+/**
+ * Runs the Boat CLI, in a login shell for its PATH and token. Its "self" needs BOAT_ID, which
+ * Boat sets in its own shells but not always for services: a cold boot started this watchdog
+ * without it, and every snapshot and stop failed.
+ */
 function boat(args, timeout) {
+  const script = '[ -n "${BOAT_ID:-}" ] || export BOAT_ID="$(node -e "$1")"; shift; boat "$@" --json';
   return new Promise((resolve, reject) => {
-    execFile("bash", ["-lc", 'boat "$@" --json', "boat", ...args], { timeout }, (err, stdout, stderr) =>
+    execFile("bash", ["-lc", script, "boat", SANDBOX_FROM_TOKEN, ...args], { timeout }, (err, stdout, stderr) =>
       err ? reject(new Error(stderr.trim() || stdout.trim() || err.message)) : resolve(stdout),
     );
   });
