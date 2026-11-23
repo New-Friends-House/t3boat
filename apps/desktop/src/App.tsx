@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { call, errorText, useUiState } from "./api";
 import type { LocalProject, McpClient, MachineView, SetupAction, UiState } from "./types";
-import { machineKey, type Action } from "./machine";
+import { machineKey, SIGN_IN_CANCELLED, type Action } from "./machine";
 import { Ocean, type OceanBoat } from "./components/Ocean";
 import { MachineRow } from "./components/MachineRow";
 import { NewMachine } from "./components/NewMachine";
@@ -161,7 +161,12 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           }
           return;
         case "sign_in_agent":
-          await call("sign_in_agent", { id: m.id, agent: a.agent });
+          try {
+            await call("sign_in_agent", { id: m.id, agent: a.agent });
+          } catch (e) {
+            if (errorText(e) === SIGN_IN_CANCELLED) return;
+            throw e;
+          }
           toast(`${a.agent} is signed in on ${m.name}`, "info");
           return;
         case "set_cliproxy":

@@ -49,6 +49,9 @@ export const PICK_PROJECT = { kind: "pickProject", label: "Add a project…" } a
 
 export type MenuItem = Action | typeof PICK_PROJECT;
 
+/** How the backend rejects a sign-in the person cancelled (`answer_sign_in` with no code). */
+export const SIGN_IN_CANCELLED = "sign-in cancelled";
+
 export const signInTo = (agent: string): Action => ({
   cmd: "sign_in_agent",
   label: `Sign in ${agent}`,

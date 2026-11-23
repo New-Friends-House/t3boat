@@ -34,7 +34,10 @@ interface MachineView {
                        // Each gets a button → sign_in_agent: the vendor's own login runs on the
                        // machine, the browser opens, the user authorizes, done. With CLIProxyAPI on
                        // (MachineDetails.cliproxy), Claude/Codex are signed out while the proxy has no
-                       // account for them, and the button adds one.
+                       // account for them, and the button adds one. Antigravity is listed only once
+                       // it is on and T3 says it is signed out.
+  codeWanted: string | null; // the agent whose sign-in waits for the code its page shows ("Antigravity"):
+                       // a code field (Send, Cancel) under its line in details and on the row → answer_sign_in
   projects: { title: string; repoKey: string | null; status: string | null }[];
                        // its T3 projects as last seen (never wakes it), then those t3boat is adding:
                        // status = clone progress in T3's words ("Receiving objects · 42%"), null once
@@ -69,9 +72,10 @@ interface MachineDetails {
   costToday: number;          // dollars, this machine only
   costMonth: number;
   awakeSecsToday: number;
-  agents: {                   // names match MachineView.signedOut / sign_in_agent
+  agents: {                   // names match MachineView.signedOut / sign_in_agent; Antigravity is
+                              // always listed, also while off on the machine (its sign-in turns it on)
     name: string;
-    signedIn: boolean;        // viaCliproxy: it has an account in the proxy
+    signedIn: boolean;        // viaCliproxy: it has an account in the proxy; not signed in → "Sign in"
     viaCliproxy: boolean;     // reaches its models through the machine's CLIProxyAPI
     accounts: { file: string; type: string; email: string | null; disabled: boolean }[];
                               // those accounts (never a token); empty unless viaCliproxy
@@ -100,7 +104,8 @@ The details view's **agents** section starts with a "Through CLIProxyAPI" switch
 | `sleep_machine` | `{ id }` | rejects with "an agent is working" mid-turn |
 | `open_machine` | `{ id, thread? }` | brings T3 Code forward, into `thread` (an id from `latest_thread`) if given; re-sends the "add to T3 Code" dialog if not paired |
 | `pair_machine` | `{ id }` | re-sends T3 Code's "add backend" dialog (secondary "Add to T3 Code again") |
-| `sign_in_agent` | `{ id, agent }` | agent = a `signedOut` name ("Claude", "Codex"); resolves once signed in (user finishes in the browser, up to 10 min) |
+| `sign_in_agent` | `{ id, agent }` | agent = an `agents` name ("Claude", "Codex", "Antigravity"); resolves once signed in (user finishes in the browser, up to 10 min). Antigravity, never through CLIProxyAPI: T3's own sign-in on the machine, after turning the provider on and installing Google's runtime there (~230 MB) if missing; Google's page ends on an Antigravity page with a code, so `codeWanted` is set until `answer_sign_in` hands T3 one. Rejects with exactly `"sign-in cancelled"` when cancelled (no toast) |
+| `answer_sign_in` | `{ id, code }` | the code for the sign-in `codeWanted` names; resolves once T3 took it, rejects with T3's words when not (the field stays for another try). `code: null` cancels that sign-in |
 | `set_cliproxy` | `{ id, on }` | wakes the machine. On: installs CLIProxyAPI there (pinned version, checksum-checked) as a service on 127.0.0.1:8317 and points Claude Code (`~/.claude/settings.json` env) and Codex (`~/.codex/config.toml` provider) at it, with a key made there; resolves once applied. Off: stops it and takes exactly those settings back out, keeping the accounts. Accounts are signed in per machine (`sign_in_agent`), never copied from this computer: their OAuth refresh tokens are single-use |
 | `remove_cliproxy_account` | `{ id, file }` | `file` from `agents[].accounts`; deletes that credential from the machine's proxy |
 | `turn_on_connect` | `{ id }` | turns on T3 Connect with T3's own `t3 up --connect` on the machine: T3's sign-in page opens in the browser, the user approves it, T3 restarts there; resolves once other devices can reach it (up to ~15 min). Rejects while an agent works (the restart would stop it). Details shows "other devices · T3 Connect" with Turn on, or "on" |

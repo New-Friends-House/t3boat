@@ -5,6 +5,7 @@ import { AgentName, AgentNames } from "./AgentLogos";
 import { BoatIcon } from "./BoatIcon";
 import { DeleteErrorNote, Dots, useArmed, useDetail } from "./common";
 import { Icon } from "./Icons";
+import { SignInCode } from "./SignInCode";
 
 interface Props {
   machine: MachineView;
@@ -48,8 +49,8 @@ export function MachineRow({
     <li
       className={`row state-${m.state}${onOpen ? " is-openable" : ""}`}
       onClick={(e) => {
-        // anywhere on the row except its own controls (buttons, menu)
-        if (onOpen && !(e.target as Element).closest("button:not(.row-name), [role=menu]")) onOpen();
+        // anywhere on the row except its own controls (buttons, menu, a sign-in's code)
+        if (onOpen && !(e.target as Element).closest("button:not(.row-name), [role=menu], .code-form")) onOpen();
       }}
       onMouseEnter={() => onHover(key)}
       onMouseLeave={() => onHover(null)}
@@ -95,7 +96,9 @@ export function MachineRow({
           onKeep={onDismissDeleteError}
         />
       ) : null}
-      {m.id && m.signedOut.length ? (
+      {m.id && m.codeWanted ? (
+        <SignInCode key={m.codeWanted} machineId={m.id} agent={m.codeWanted} className="row-code" />
+      ) : m.id && m.signedOut.length ? (
         <div className="row-note">
           <span className="row-note-text">
             <AgentNames names={m.signedOut} /> {m.signedOut.length === 1 ? "needs" : "need"} a sign-in

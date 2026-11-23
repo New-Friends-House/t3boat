@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMachineDetails, useLatestThread } from "../api";
 import type { AgentLogin, CliproxyAccount, MachineDetails as Details, LocalProject, MachineView, Size } from "../types";
 import {
@@ -30,6 +30,7 @@ import { BoatIcon } from "./BoatIcon";
 import { DeleteErrorNote, Dots, useArmed, useDetail, useEscape, useSecsLeft } from "./common";
 import { Icon } from "./Icons";
 import { ProjectPicker } from "./ProjectPicker";
+import { SignInCode } from "./SignInCode";
 import { SubHeader } from "./SubHeader";
 
 interface Props {
@@ -314,34 +315,40 @@ function Agents({
                 />
               );
             }
+            // Antigravity may be off on the machine: its sign-in turns it on and installs it.
             return (
-              <li key={a.name} className="line">
-                <span className="line-main">
-                  <AgentName name={a.name} />
-                </span>
-                {a.signedIn ? (
-                  <span className="line-ok">
-                    <Icon name="check" size={10} /> signed in
+              <Fragment key={a.name}>
+                <li className="line">
+                  <span className="line-main">
+                    <AgentName name={a.name} />
                   </span>
-                ) : m.signedOut.includes(a.name) ? (
-                  <button
-                    className="btn btn-sm btn-outline"
-                    disabled={!!pending || gone}
-                    aria-busy={running}
-                    onClick={() => signIn(a.name, signInTo(a.name))}
-                  >
-                    {running ? (
-                      <>
-                        <Dots /> Signing in…
-                      </>
-                    ) : (
-                      "Sign in"
-                    )}
-                  </button>
-                ) : (
-                  <span className="caption">signed out</span>
-                )}
-              </li>
+                  {a.signedIn ? (
+                    <span className="line-ok">
+                      <Icon name="check" size={10} /> signed in
+                    </span>
+                  ) : (
+                    <button
+                      className="btn btn-sm btn-outline"
+                      disabled={!!pending || gone}
+                      aria-busy={running}
+                      onClick={() => signIn(a.name, signInTo(a.name))}
+                    >
+                      {running ? (
+                        <>
+                          <Dots /> Signing in…
+                        </>
+                      ) : (
+                        "Sign in"
+                      )}
+                    </button>
+                  )}
+                </li>
+                {m.codeWanted === a.name ? (
+                  <li className="line line-code">
+                    <SignInCode machineId={m.id} agent={a.name} className="details-code" />
+                  </li>
+                ) : null}
+              </Fragment>
             );
           })
         ) : (

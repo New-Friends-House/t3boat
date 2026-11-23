@@ -1,6 +1,7 @@
 //! One remote machine at runtime: its power state on Boat, its watchdog, waking it on demand and
 //! capturing its final state when it goes to sleep.
 
+pub mod antigravity;
 mod callback;
 mod capture;
 pub mod cliproxy;
@@ -175,6 +176,8 @@ pub struct MachineRuntime {
     /// Its T3 projects as last read, and those t3boat is adding.
     projects: Mutex<Vec<projects::MachineProject>>,
     adding: Mutex<Vec<projects::MachineProject>>,
+    /// A sign-in waiting for the code its page shows, pasted into this app.
+    code_wait: Mutex<Option<antigravity::CodeWait>>,
 }
 
 impl MachineRuntime {
@@ -197,6 +200,7 @@ impl MachineRuntime {
             wake_failure: Mutex::new(None),
             projects: Mutex::new(Vec::new()),
             adding: Mutex::new(Vec::new()),
+            code_wait: Mutex::new(None),
         };
         if let Some(shell) = shell {
             this.set_projects_from(&shell);

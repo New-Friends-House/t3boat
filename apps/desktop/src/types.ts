@@ -22,6 +22,7 @@ export interface MachineView {
   countdown: Countdown | null; // set while `detail` counts down
   paired: boolean;
   signedOut: string[];
+  codeWanted: string | null; // the agent whose sign-in waits for the code its page shows (Antigravity)
   projects: MachineProject[]; // its T3 projects as last seen (never wakes it), then those being added
   keepAwakeUntil: number | null; // when a "keep awake" runs out (unix ms); null when off or until stopped
   keepAwakeForever: boolean; // kept awake until someone stops it: no auto sleep
@@ -120,7 +121,8 @@ export interface Commands {
   delete_machine: [{ id: string; discard?: boolean }, void];
   resize_machine: [{ id: string; size: string }, void];
   keep_awake: [{ id: string; minutes: number | null }, void]; // null: until stopped; 0: stop
-  sign_in_agent: [{ id: string; agent: string }, void]; // with CLIProxyAPI on: adds an account to it
+  sign_in_agent: [{ id: string; agent: string }, void]; // with CLIProxyAPI on: adds an account to it (never Antigravity's)
+  answer_sign_in: [{ id: string; code: string | null }, void]; // the code for `codeWanted`'s sign-in; null cancels it
   set_cliproxy: [{ id: string; on: boolean }, void]; // wakes the machine; resolves once applied
   remove_cliproxy_account: [{ id: string; file: string }, void];
   turn_on_connect: [{ id: string }, void]; // resolves once reachable, after the browser sign-in

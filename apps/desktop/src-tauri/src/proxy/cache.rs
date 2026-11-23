@@ -275,8 +275,10 @@ impl Cache {
             .for_each(|(_, r)| record_config_event(&mut r.value, &event));
     }
 
-    /// The machine's enabled agent providers, per its last config: name and auth status.
+    /// The machine's enabled agent providers, per its last config: name and auth status. Also
+    /// Antigravity while it is off ("disabled"): its sign-in here turns it on.
     pub fn agents(&self) -> Vec<(String, String)> {
+        use crate::machine::antigravity;
         self.streams
             .iter()
             .filter(|(k, _)| k.starts_with("subscribeServerConfig "))
@@ -285,12 +287,15 @@ impl Cache {
             .and_then(|s| s["config"]["providers"].as_array())
             .into_iter()
             .flatten()
-            .filter(|p| p["enabled"] == true)
             .filter_map(|p| {
-                Some((
-                    p["displayName"].as_str()?.to_owned(),
-                    p["auth"]["status"].as_str().unwrap_or("unknown").to_owned(),
-                ))
+                let antigravity = p["instanceId"] == antigravity::INSTANCE;
+                let enabled = p["enabled"] == true;
+                if !enabled && !antigravity {
+                    return None;
+                }
+                let name = if antigravity { antigravity::NAME } else { p["displayName"].as_str()? };
+                let status = if enabled { p["auth"]["status"].as_str().unwrap_or("unknown") } else { "disabled" };
+                Some((name.to_owned(), status.to_owned()))
             })
             .collect()
     }
@@ -523,6 +528,25 @@ mod tests {
         assert_eq!(c.signed_out_providers(), vec!["a".to_owned()]);
         c.fold_providers(&json!([provider("a", "authenticated", json!([]))]));
         assert!(c.signed_out_providers().is_empty());
+    }
+
+    #[test]
+    fn agents_are_the_enabled_providers_and_antigravity_while_off() {
+        let mut c = Cache::default();
+        let off = |id: &str, name: &str| {
+            json!({"instanceId": id, "displayName": name, "enabled": false, "auth": {"status": "unknown"}})
+        };
+        let providers = json!([provider("claudeAgent", "authenticated", json!([])), off("cursor", "Cursor"),
+            off("antigravity", "Antigravity")]);
+        let snapshot = json!({"type": "snapshot", "config": {"providers": providers}});
+        c.record_stream_items("subscribeServerConfig", CONFIG, &[snapshot], true);
+        let agents = |c: &Cache| c.agents().into_iter().map(|(n, s)| format!("{n}:{s}")).collect::<Vec<_>>();
+        assert_eq!(agents(&c), ["claudeAgent:authenticated", "Antigravity:disabled"]);
+        // On, it shows T3's status like any other, under its own name whatever T3 calls it.
+        let mut on = provider("antigravity", "unauthenticated", json!([]));
+        on["displayName"] = json!("Gemini");
+        c.fold_providers(&json!([provider("claudeAgent", "authenticated", json!([])), on]));
+        assert_eq!(agents(&c), ["claudeAgent:authenticated", "Antigravity:unauthenticated"]);
     }
 
     #[test]
