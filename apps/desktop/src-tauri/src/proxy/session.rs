@@ -785,6 +785,37 @@ mod tests {
         server.abort();
     }
 
+    /// Opening a project's settings lists its images for the icon picker: never a wake, nor a
+    /// request left waiting into T3 Code's slow-request warning.
+    #[tokio::test]
+    async fn project_icon_candidates_while_asleep_answer_from_cache_or_fail_without_waking() {
+        let dir = TempDir::new();
+        let m = test_machine(&dir.0, "http://127.0.0.1:1", Power::Stopped);
+        let icons = |cwd: &str| json!({"cwd": cwd, "query": "", "limit": 200, "kind": "file", "imageOnly": true});
+        let seen = json!({"entries": [{"path": "public/logo.png", "kind": "file"}], "truncated": false});
+        {
+            let mut cache = m.cache.lock().unwrap();
+            cache.record_unary(&request_key("projects.searchEntries", &icons("/a")), 0, &seen);
+            cache.bump_epoch();
+        }
+        let (mut ws, server) = spawn_session(m.clone()).await;
+
+        send_req(&mut ws, 1, "projects.searchEntries", icons("/a")).await;
+        let reply = recv_json(&mut ws).await;
+        assert_eq!(reply["requestId"], 1);
+        assert_eq!(reply["exit"]["value"], seen);
+
+        send_req(&mut ws, 2, "projects.searchEntries", icons("/b")).await;
+        let reply = recv_json(&mut ws).await;
+        assert_eq!(reply["requestId"], 2);
+        assert_eq!(reply["exit"]["cause"][0]["defect"], "machine is asleep");
+
+        assert_eq!(m.power(), Power::Stopped);
+        assert!(m.waking.try_lock().is_ok());
+
+        server.abort();
+    }
+
     #[tokio::test]
     async fn background_and_void_calls_answer_immediately_during_wake() {
         let dir = TempDir::new();
