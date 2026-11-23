@@ -145,6 +145,7 @@ pub fn recorded_unary(tag: &str, payload: &Value) -> bool {
                     | "pullRequests.detail"
                     | "pullRequests.checks"
                     | "pullRequests.routing"
+                    | "issues.list"
                     | "sourceControl.lookupRepository"
                     | "device.list"
             ))
@@ -190,7 +191,8 @@ pub fn is_side_info(tag: &str, payload: &Value) -> bool {
 
 /// Served as last seen, whatever the epoch: side information, and what T3 Code sends on its
 /// own in the very shape a person also waits for: the linked machines (Send), a pull request
-/// (a quick merge, the checks popover), the title of the chat that delegated this one, the
+/// (a quick merge, the checks popover), the issues (asked of every environment at once, so a
+/// sleeping machine would wake just for the list to open), the title of the chat that delegated this one, the
 /// archived chats (their settings page), the chats under "Show more", the files of a commit
 /// or of the working tree, an MCP app's tool definition and resources (a tool call, a click
 /// in the app, an approved download). With nothing recorded those wake the machine: left
@@ -204,6 +206,7 @@ pub fn serves_last_seen(tag: &str, payload: &Value) -> bool {
                 | "orchestration.getArchivedShellSnapshot"
                 | "orchestration.getOlderSettledThreads"
                 | "pullRequests.detail"
+                | "issues.list"
                 | "mcpApps.toolInfo"
                 | "mcpApps.readResource"
         )
@@ -361,6 +364,7 @@ mod tests {
             // A chat's pull request row and the read before a quick merge; the checks popover.
             ("pullRequests.detail", json!({"number": 1, "allowStale": false})),
             ("pullRequests.detail", json!({"number": 1})),
+            ("issues.list", json!({})),
             ("review.getDiffPreview", json!({"cwd": "/w", "metadataOnly": true, "commitSha": "c"})),
             ("review.getDiffPreview", json!({"cwd": "/w", "metadataOnly": true, "sourceKind": "working-tree"})),
             ("mcpApps.toolInfo", json!({"threadId": "t", "itemId": "i", "name": "n"})),
