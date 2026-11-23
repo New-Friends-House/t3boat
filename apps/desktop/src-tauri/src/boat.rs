@@ -66,6 +66,11 @@ pub struct Starts {
 }
 
 impl Boat {
+    #[cfg(test)]
+    pub(crate) fn stub() -> Self {
+        Self { bin: PathBuf::from("/nonexistent/boat") }
+    }
+
     /// Finds the CLI the Boat installer puts in `~/.ascii/bin`, else on PATH.
     pub fn locate() -> Option<Self> {
         let exe = if cfg!(windows) { "boat.exe" } else { "boat" };
