@@ -231,7 +231,38 @@ impl Session {
             }
             Phase::Live => self.forward(req),
             Phase::Asleep => self.on_asleep(req).await?,
-            Phase::Settling | Phase::Waking | Phase::Connecting => self.held.push(req),
+            Phase::Settling | Phase::Waking | Phase::Connecting => self.on_waiting(req).await?,
+        }
+        Ok(())
+    }
+
+    /// A request while no live upstream is attached yet: background calls are answered at once
+    /// during a wake or on a socket that already holds cached streams (which will close and
+    /// reconnect once the machine is up), so they never wait past T3 Code's 15 s slow-request
+    /// warning. On a fresh connect to a running machine (`cached` empty), they stay held for the
+    /// brief handshake and go straight upstream.
+    async fn on_waiting(&mut self, req: Value) -> Result<()> {
+        let answer_now =
+            self.phase == Phase::Waking || !self.cached.is_empty() || req["tag"] == "server.probe";
+        if answer_now
+            && let Some(reply) = self.answer_background(&req)
+        {
+            self.send(&reply).await?;
+            return Ok(());
+        }
+        self.held.push(req);
+        Ok(())
+    }
+
+    /// Answers any background requests already held before a wake started.
+    async fn drain_background_held(&mut self) -> Result<()> {
+        let held = std::mem::take(&mut self.held);
+        for req in held {
+            if let Some(reply) = self.answer_background(&req) {
+                self.send(&reply).await?;
+            } else {
+                self.held.push(req);
+            }
         }
         Ok(())
     }
@@ -274,23 +305,18 @@ impl Session {
         self.forwarded.values().any(|f| !classify::is_subscription(&f.tag))
     }
 
-    /// What the proxy can answer for a sleeping machine without lying. `None`: needs the machine.
-    fn answer_locally(&mut self, req: &Value) -> Option<Vec<Value>> {
+    /// Calls that never need the machine while it is not live: liveness probes, fire-and-forget
+    /// signals, background probes (last answer from any epoch, or fail), and recorded side-info
+    /// reads.
+    fn answer_background(&self, req: &Value) -> Option<Value> {
         let id = &req["id"];
         let tag = req["tag"].as_str()?;
         let payload = &req["payload"];
-        let open = |s: &mut Self| {
-            s.cached.insert(id_key(id));
-        };
         if tag == "server.probe" {
-            return Some(vec![exit_success(id, json!({}))]);
+            return Some(exit_success(id, json!({})));
         }
         if classify::is_void_signal(tag) {
-            return Some(vec![exit_success(id, Value::Null)]);
-        }
-        if classify::SILENT_STREAMS.contains(&tag) {
-            open(self);
-            return Some(vec![]);
+            return Some(exit_success(id, Value::Null));
         }
         let key = request_key(tag, payload);
         if classify::is_background_probe(tag, payload) {
@@ -299,8 +325,31 @@ impl Session {
             let value = value.filter(|v| {
                 tag != "assets.createUrl" || assets::answer_path(self.m.dir(), v).is_some_and(|f| f.exists())
             });
-            return Some(vec![value.map_or_else(|| exit_die(id, "machine is asleep"), |v| exit_success(id, v))]);
+            let reason = if self.phase == Phase::Waking { "machine is waking" } else { "machine is asleep" };
+            return Some(value.map_or_else(|| exit_die(id, reason), |v| exit_success(id, v)));
         }
+        if classify::is_side_info(tag, payload) && recorded_unary(tag, payload) {
+            return self.m.cache.lock().unwrap().unary(&key, true).map(|v| exit_success(id, v));
+        }
+        None
+    }
+
+    /// What the proxy can answer for a sleeping machine without lying. `None`: needs the machine.
+    fn answer_locally(&mut self, req: &Value) -> Option<Vec<Value>> {
+        let id = &req["id"];
+        let tag = req["tag"].as_str()?;
+        let payload = &req["payload"];
+        let open = |s: &mut Self| {
+            s.cached.insert(id_key(id));
+        };
+        if let Some(reply) = self.answer_background(req) {
+            return Some(vec![reply]);
+        }
+        if classify::SILENT_STREAMS.contains(&tag) {
+            open(self);
+            return Some(vec![]);
+        }
+        let key = request_key(tag, payload);
         if classify::is_connection_stream(tag) {
             let mut items = self.m.cache.lock().unwrap().stream(&key)?;
             if tag == "subscribeServerConfig" {
@@ -431,6 +480,7 @@ impl Session {
                 // Asleep after all, or not ready yet: a wake sorts out both.
                 self.phase = Phase::Asleep;
                 self.wake();
+                self.drain_background_held().await?;
             }
             Internal::Up(Some(text)) => return self.on_up(&text).await,
             Internal::Up(None) => return self.on_upstream_lost().await,
@@ -607,5 +657,276 @@ impl Session {
         tracing::info!("{} went to sleep with a client attached", self.m.id());
         self.go_asleep().await?;
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boat::Boat;
+    use crate::machine::Shared;
+    use crate::store::{Machine, Settings};
+    use crate::t3desktop::T3Desktop;
+    use axum::Router;
+    use axum::extract::WebSocketUpgrade;
+    use axum::routing::get;
+    use std::path::PathBuf;
+    use std::sync::RwLock;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("t3boat-session-{:016x}", rand::random::<u64>()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_machine(dir: &std::path::Path, upstream_url: &str, power: Power) -> Arc<MachineRuntime> {
+        let (events, _rx) = mpsc::unbounded_channel();
+        let shared = Arc::new(Shared {
+            boat: Boat::stub(),
+            t3: T3Desktop::stub(),
+            settings: RwLock::new(Settings::default()),
+            events,
+            http: reqwest::Client::new(),
+        });
+        let record = Machine {
+            id: "bx_test".into(),
+            sandbox_id: "bx_test".into(),
+            name: "dinghy".into(),
+            size: "default".into(),
+            upstream_url: upstream_url.into(),
+            upstream_token: "upstream-tok".into(),
+            watchdog_url: "http://127.0.0.1:1".into(),
+            watchdog_secret: "wd-sec".into(),
+            local_port: 0,
+            t3_version: "0.1.11".into(),
+            provision_revision: "rev".into(),
+            environment_id: "env-1".into(),
+            client_tokens: vec![],
+            device_tokens: vec![],
+            link_tokens: vec![],
+            created_at: 0,
+            next_due_at: None,
+            connect: false,
+            cliproxy: false,
+            cliproxy_accounts: vec![],
+        };
+        let m = Arc::new(MachineRuntime::new(shared, record, dir.to_path_buf()));
+        m.set_power_for_test(power);
+        m
+    }
+
+    async fn spawn_session(m: Arc<MachineRuntime>) -> (upstream::Upstream, JoinHandle<()>) {
+        let app = Router::new().route(
+            "/ws",
+            get(move |ws: WebSocketUpgrade| {
+                let m = m.clone();
+                async move { ws.on_upgrade(move |socket| run(m, socket, String::new())) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.unwrap();
+        (ws, server)
+    }
+
+    async fn send_req(ws: &mut upstream::Upstream, id: u64, tag: &str, payload: Value) {
+        let frame = json!({"_tag": "Request", "id": id, "tag": tag, "payload": payload, "headers": []});
+        ws.send(UpMsg::text(frame.to_string())).await.unwrap();
+    }
+
+    async fn recv_json(ws: &mut upstream::Upstream) -> Value {
+        let msg = tokio::time::timeout(Duration::from_secs(2), ws.next()).await.unwrap().unwrap().unwrap();
+        let UpMsg::Text(text) = msg else { panic!("expected text frame, got {msg:?}") };
+        serde_json::from_str(&text).unwrap()
+    }
+
+    #[tokio::test]
+    async fn usage_summary_while_asleep_answers_from_cache_or_fails_without_waking() {
+        let dir = TempDir::new();
+        let m = test_machine(&dir.0, "http://127.0.0.1:1", Power::Stopped);
+        let day_a = json!({"resolution": "day", "sinceDay": "2026-10-25", "untilDay": "2026-11-23"});
+        let day_b = json!({"resolution": "day", "sinceDay": "2026-10-26", "untilDay": "2026-11-24"});
+        {
+            let mut cache = m.cache.lock().unwrap();
+            cache.record_unary(&request_key("server.getUsageSummary", &day_a), 0, &json!({"buckets": [1]}));
+            cache.bump_epoch();
+        }
+        let (mut ws, server) = spawn_session(m.clone()).await;
+
+        send_req(&mut ws, 1, "server.getUsageSummary", day_a).await;
+        let reply = recv_json(&mut ws).await;
+        assert_eq!(reply["requestId"], 1);
+        assert_eq!(reply["exit"]["_tag"], "Success");
+        assert_eq!(reply["exit"]["value"], json!({"buckets": [1]}));
+
+        send_req(&mut ws, 2, "server.getUsageSummary", day_b).await;
+        let reply = recv_json(&mut ws).await;
+        assert_eq!(reply["requestId"], 2);
+        assert_eq!(reply["exit"]["_tag"], "Failure");
+        assert_eq!(reply["exit"]["cause"][0]["defect"], "machine is asleep");
+
+        // Neither call woke the machine.
+        assert_eq!(m.power(), Power::Stopped);
+        assert!(m.waking.try_lock().is_ok());
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn background_and_void_calls_answer_immediately_during_wake() {
+        let dir = TempDir::new();
+        let m = test_machine(&dir.0, "http://127.0.0.1:1", Power::Stopped);
+
+        let asset_kept_req = json!({"resource": {"_tag": "attachment", "attachmentId": "kept"}});
+        let asset_kept_ans = json!({"relativeUrl": "/api/assets/t1/kept.png"});
+        let asset_missing_req = json!({"resource": {"_tag": "attachment", "attachmentId": "missing"}});
+        let asset_missing_ans = json!({"relativeUrl": "/api/assets/t2/missing.png"});
+        let refs_req = json!({"cwd": "/w", "limit": 100});
+        let refs_ans = json!({"refs": ["main"]});
+        {
+            let mut cache = m.cache.lock().unwrap();
+            cache.record_stream_items(
+                "subscribeServerConfig",
+                &request_key("subscribeServerConfig", &json!({})),
+                &[json!({"type": "snapshot", "config": {}})],
+                true,
+            );
+            cache.record_unary(&request_key("assets.createUrl", &asset_kept_req), 0, &asset_kept_ans);
+            cache.record_unary(&request_key("assets.createUrl", &asset_missing_req), 0, &asset_missing_ans);
+            cache.record_unary(&request_key("vcs.listRefs", &refs_req), 0, &refs_ans);
+            cache.bump_epoch();
+        }
+        let kept_file = assets::answer_path(&dir.0, &asset_kept_ans).unwrap();
+        crate::store::write_private(&kept_file, b"[]\npng").unwrap();
+
+        // Hold the wake lock so `Phase::Waking` stays in flight throughout the test.
+        let _waking = m.waking.lock().await;
+        let (mut ws, server) = spawn_session(m.clone()).await;
+
+        send_req(&mut ws, 1, "subscribeServerConfig", json!({})).await;
+        assert_eq!(recv_json(&mut ws).await["_tag"], "Chunk");
+
+        // No fresh capture: `orchestration.subscribeShell` transitions the session to `Phase::Waking`.
+        send_req(&mut ws, 2, "orchestration.subscribeShell", json!({})).await;
+        // Let the session process `subscribeShell` before sending the next batch.
+        send_req(&mut ws, 3, "server.probe", json!({})).await;
+        assert_eq!(recv_json(&mut ws).await, exit_success(&json!(3), json!({})));
+
+        // Void signals answer immediately while waking.
+        send_req(&mut ws, 4, "preview.reportProfiles", json!({"profiles": []})).await;
+        assert_eq!(recv_json(&mut ws).await, exit_success(&json!(4), Value::Null));
+
+        send_req(&mut ws, 5, "server.reportClientActivity", json!({"focused": true})).await;
+        assert_eq!(recv_json(&mut ws).await, exit_success(&json!(5), Value::Null));
+
+        // Background probes answer from cache (with file check for assets) or fail fast while waking.
+        send_req(&mut ws, 6, "assets.createUrl", asset_kept_req).await;
+        assert_eq!(recv_json(&mut ws).await, exit_success(&json!(6), asset_kept_ans));
+
+        send_req(&mut ws, 7, "assets.createUrl", asset_missing_req).await;
+        assert_eq!(recv_json(&mut ws).await, exit_die(&json!(7), "machine is waking"));
+
+        send_req(&mut ws, 8, "assets.createUrl", json!({"resource": {"_tag": "attachment", "attachmentId": "new"}}))
+            .await;
+        assert_eq!(recv_json(&mut ws).await, exit_die(&json!(8), "machine is waking"));
+
+        send_req(&mut ws, 9, "server.refreshProviders", json!({"usageLimitsCommand": true})).await;
+        assert_eq!(recv_json(&mut ws).await, exit_die(&json!(9), "machine is waking"));
+
+        send_req(&mut ws, 10, "server.getUsageSummary", json!({"resolution": "day"})).await;
+        assert_eq!(recv_json(&mut ws).await, exit_die(&json!(10), "machine is waking"));
+
+        // Recorded side-info unary reads answer from cache while waking.
+        send_req(&mut ws, 11, "vcs.listRefs", refs_req).await;
+        assert_eq!(recv_json(&mut ws).await, exit_success(&json!(11), refs_ans));
+
+        // User-initiated calls stay held for the live machine rather than failing fast.
+        send_req(&mut ws, 12, "server.refreshProviders", json!({"reloadSecrets": true})).await;
+        send_req(&mut ws, 13, "projects.readFile", json!({"cwd": "/w", "relativePath": "a.rs"})).await;
+        assert!(tokio::time::timeout(Duration::from_millis(80), ws.next()).await.is_err());
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn fresh_connect_to_running_machine_forwards_void_and_background_calls_upstream() {
+        let dir = TempDir::new();
+        let upstream_app = Router::new().route(
+            "/ws",
+            get(|ws: WebSocketUpgrade| async move {
+                ws.on_upgrade(|mut socket| async move {
+                    while let Some(Ok(DownMsg::Text(text))) = socket.next().await {
+                        for msg in messages(text.as_str()).unwrap() {
+                            if msg["_tag"] == "Request" {
+                                let reply = exit_success(&msg["id"], json!({"upstream": msg["tag"]}));
+                                let _ = socket.send(DownMsg::text(reply.to_string())).await;
+                            }
+                        }
+                    }
+                })
+            }),
+        );
+        let up_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let up_addr = up_listener.local_addr().unwrap();
+        let up_server = tokio::spawn(async move {
+            let _ = axum::serve(up_listener, upstream_app).await;
+        });
+
+        let m = test_machine(&dir.0, &format!("http://{up_addr}"), Power::Running);
+        let (mut ws, server) = spawn_session(m).await;
+
+        // Sent immediately on a fresh socket (during Settling/Connecting with `cached` empty):
+        // must be held briefly and forwarded to upstream rather than swallowed locally.
+        send_req(&mut ws, 1, "preview.reportProfiles", json!({"profiles": ["default"]})).await;
+        send_req(&mut ws, 2, "assets.createUrl", json!({"resource": {"_tag": "attachment", "attachmentId": "x"}}))
+            .await;
+
+        let r1 = recv_json(&mut ws).await;
+        let r2 = recv_json(&mut ws).await;
+        assert_eq!(r1, exit_success(&json!(1), json!({"upstream": "preview.reportProfiles"})));
+        assert_eq!(r2, exit_success(&json!(2), json!({"upstream": "assets.createUrl"})));
+
+        server.abort();
+        up_server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_connect_entering_wake_drains_held_background_calls() {
+        let dir = TempDir::new();
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_addr = closed.local_addr().unwrap();
+        drop(closed);
+
+        let m = test_machine(&dir.0, &format!("http://{closed_addr}"), Power::Running);
+        let _waking = m.waking.lock().await;
+        let (mut ws, server) = spawn_session(m.clone()).await;
+
+        send_req(&mut ws, 1, "subscribeServerConfig", json!({})).await;
+        send_req(&mut ws, 2, "preview.reportProfiles", json!({"profiles": []})).await;
+        send_req(&mut ws, 3, "assets.createUrl", json!({"resource": {"_tag": "attachment", "attachmentId": "x"}}))
+            .await;
+
+        // Once the connect fails and enters `Phase::Waking`, held background calls drain at once,
+        // while `subscribeServerConfig` stays held for the wake.
+        let r2 = recv_json(&mut ws).await;
+        let r3 = recv_json(&mut ws).await;
+        assert_eq!(r2, exit_success(&json!(2), Value::Null));
+        assert_eq!(r3, exit_die(&json!(3), "machine is waking"));
+        assert!(tokio::time::timeout(Duration::from_millis(80), ws.next()).await.is_err());
+
+        server.abort();
     }
 }

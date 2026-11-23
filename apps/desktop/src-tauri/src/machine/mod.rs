@@ -65,7 +65,7 @@ impl Power {
             "ready" | "idle" | "running" => Power::Running,
             "stopped" => Power::Stopped,
             "stopping" => Power::Stopping,
-            "provisioned" | "cloning" | "resuming" | "starting" => Power::Starting,
+            "provisioning" | "provisioned" | "cloning" | "resuming" | "starting" => Power::Starting,
             _ => Power::Unknown,
         }
     }
@@ -241,6 +241,11 @@ impl MachineRuntime {
     pub fn retire(&self) {
         let _cache = self.cache.lock().unwrap();
         self.set_power(Power::Missing);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_power_for_test(&self, p: Power) {
+        self.set_power(p);
     }
 
     /// Missing is final: a Boat answer or a wake still in flight from before must not revive a

@@ -44,6 +44,11 @@ pub struct T3Desktop {
 }
 
 impl T3Desktop {
+    #[cfg(test)]
+    pub(crate) fn stub() -> Self {
+        Self { cli: PathBuf::from("/nonexistent/t3"), token_file: None, token: Arc::default() }
+    }
+
     pub fn locate() -> Option<Self> {
         let home = dirs::home_dir()?;
         let bin = home.join(".t3").join("bin");

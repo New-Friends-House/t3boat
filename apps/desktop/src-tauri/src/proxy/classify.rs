@@ -23,10 +23,13 @@ pub const SILENT_STREAMS: &[&str] =
 /// Calls T3 Code makes on its own. While asleep they get their last answer from any epoch, or
 /// fail: they must never wake the machine. `assets.createUrl` is the URL of an image a chat
 /// shows: failing it frees T3 Code's few slots for the images that are stored.
+/// `server.getUsageSummary` is polled across every environment with a rolling date window: a
+/// sleeping machine accrues no usage.
 const BACKGROUND_PROBES: &[&str] = &[
     "server.refreshProviders",
     "server.discoverSourceControl",
     "server.searchAcpRegistry",
+    "server.getUsageSummary",
     "agentSessions.scan",
     "vcs.refreshStatus",
     "assets.createUrl",
@@ -117,7 +120,6 @@ pub fn recorded_unary(tag: &str, payload: &Value) -> bool {
                 tag,
                 "server.getConfig"
                     | "server.getHostResources"
-                    | "server.getUsageSummary"
                     | "server.listAcpRegistryProviders"
                     | "peerLinks.list"
                     | "cloud.getRelayClientStatus"
@@ -472,6 +474,18 @@ mod tests {
         assert!(BACKGROUND_PROBES.contains(&"assets.createUrl"));
         assert!(recorded_unary("assets.createUrl", &json!({})));
         assert!(!is_user_action("assets.createUrl", &json!({})));
+    }
+
+    #[test]
+    fn usage_summary_is_a_background_probe_and_never_wakes() {
+        for payload in [
+            json!({"resolution": "day", "sinceDay": "2026-10-25", "untilDay": "2026-11-23"}),
+            json!({"provisional": true, "resolution": "day", "sinceDay": "2026-10-25", "untilDay": "2026-11-23"}),
+        ] {
+            assert!(is_background_probe("server.getUsageSummary", &payload), "{payload}");
+            assert!(recorded_unary("server.getUsageSummary", &payload), "{payload}");
+            assert!(!is_user_action("server.getUsageSummary", &payload), "{payload}");
+        }
     }
 
     #[test]
