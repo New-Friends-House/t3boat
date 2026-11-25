@@ -67,9 +67,6 @@ pub struct CliproxyAccount {
     pub email: Option<String>,
     #[serde(default)]
     pub disabled: bool,
-    /// Routing priority in CLIProxyAPI (default 0; higher numbers are tried first).
-    #[serde(default)]
-    pub priority: i32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
