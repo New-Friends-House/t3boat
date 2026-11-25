@@ -89,20 +89,6 @@ pub enum WatchdogPhase {
     Stopping,
 }
 
-/// One account as the watchdog reports it; older watchdogs omit `priority`.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WatchdogCliproxyAccount {
-    pub file: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub email: Option<String>,
-    #[serde(default)]
-    pub disabled: bool,
-    #[serde(default)]
-    pub priority: Option<i32>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WatchdogStatus {
@@ -130,7 +116,7 @@ pub struct WatchdogStatus {
     /// The accounts signed in to CLIProxyAPI there; none when it was never set up or the
     /// watchdog is older.
     #[serde(default)]
-    pub cliproxy_accounts: Option<Vec<WatchdogCliproxyAccount>>,
+    pub cliproxy_accounts: Option<Vec<CliproxyAccount>>,
     pub manifest: Option<Manifest>,
     /// When this app got the status: what its second counts are relative to.
     #[serde(skip, default = "SystemTime::now")]
@@ -847,24 +833,10 @@ impl MachineRuntime {
         if self.record.read().unwrap().next_due_at != s.next_due_at {
             self.update_record(|r| r.next_due_at = s.next_due_at);
         }
-        if let Some(accounts) = &s.cliproxy_accounts {
-            let current = self.record.read().unwrap().cliproxy_accounts.clone();
-            let resolved: Vec<CliproxyAccount> = accounts
-                .iter()
-                .map(|a| CliproxyAccount {
-                    file: a.file.clone(),
-                    kind: a.kind.clone(),
-                    email: a.email.clone(),
-                    disabled: a.disabled,
-                    // Older watchdogs omit `priority`: keep what we already know for that file.
-                    priority: a
-                        .priority
-                        .unwrap_or_else(|| current.iter().find(|c| c.file == a.file).map_or(0, |c| c.priority)),
-                })
-                .collect();
-            if current != resolved {
-                self.update_record(|r| r.cliproxy_accounts = resolved);
-            }
+        if let Some(accounts) = &s.cliproxy_accounts
+            && self.record.read().unwrap().cliproxy_accounts != *accounts
+        {
+            self.update_record(|r| r.cliproxy_accounts = accounts.clone());
         }
         let manifest = s.manifest.clone();
         let phase = s.phase;

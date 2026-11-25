@@ -73,7 +73,6 @@ enum Call {
     SignInAgent { machine: String, agent: String },
     AnswerSignIn { machine: String, code: Option<String> },
     SetCliproxy { machine: String, on: bool },
-    SetCliproxyAccountPriority { machine: String, file: String, priority: i32 },
     TurnOnConnect { machine: String },
     MachineDetails { machine: String },
     SetAutoSleep { machine: String, on: bool },
@@ -292,19 +291,6 @@ fn tool_list() -> Value {
             &["machine", "on"],
         ),
         tool(
-            "set_cliproxy_account_priority",
-            "Sets the routing priority of an account in a machine's CLIProxyAPI (higher numbers are \
-             tried first, e.g. 10 to prioritize an account, 0 to reset to default). Pass file from \
-             machine_details's agents[].accounts. Requires CLIProxyAPI to be on for that machine; \
-             wakes the machine.",
-            json!({
-                "machine": machine,
-                "file": { "type": "string", "description": "Account file name from machine_details (agents[].accounts[].file)" },
-                "priority": { "type": "integer", "description": "Routing priority (e.g. 10 for high priority, 0 for default)" },
-            }),
-            &["machine", "file", "priority"],
-        ),
-        tool(
             "turn_on_connect",
             "Turns on T3 Connect on a machine, so the user's other devices (the T3 Code phone app, a \
              browser) reach it with their T3 account. Opens T3's sign-in page in the user's browser on \
@@ -490,15 +476,6 @@ async fn run(app: &Arc<App>, call: Call) -> Result<String> {
                 false => format!("{name}'s agents use their own sign-ins again."),
             }
         }
-        Call::SetCliproxyAccountPriority { machine, file, priority } => {
-            let m = app.machine(&machine)?;
-            m.set_cliproxy_account_priority(&file, priority).await?;
-            let name = m.record().name;
-            match priority {
-                0 => format!("Reset {file}'s priority to default (0) on {name}."),
-                p => format!("Set {file}'s priority to {p} on {name}."),
-            }
-        }
         Call::TurnOnConnect { machine } => {
             let m = app.machine(&machine)?;
             m.turn_on_connect().await?;
@@ -668,12 +645,8 @@ mod tests {
     async fn lists_tools_and_rejects_unknown_methods() {
         let tools = rpc("tools/list", json!({})).await["result"]["tools"].clone();
         let names: Vec<&str> = tools.as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-        assert_eq!(names.len(), 20);
-        assert!(
-            names.contains(&"sign_in_agent")
-                && names.contains(&"set_cliproxy_account_priority")
-                && names.contains(&"delete_machine")
-        );
+        assert_eq!(names.len(), 19);
+        assert!(names.contains(&"sign_in_agent") && names.contains(&"delete_machine"));
         assert_eq!(rpc("ping", json!({})).await["result"], json!({}));
         assert_eq!(rpc("resources/list", json!({})).await["error"]["code"], -32601);
     }
@@ -684,18 +657,6 @@ mod tests {
         assert_eq!(r["result"], content("ListMachines".into(), false));
         let r = rpc("tools/call", json!({ "name": "create_machine", "arguments": { "name": "dev" } })).await;
         assert_eq!(r["result"]["content"][0]["text"], r#"CreateMachine { name: "dev", size: None, projects: [] }"#);
-        let r = rpc(
-            "tools/call",
-            json!({
-                "name": "set_cliproxy_account_priority",
-                "arguments": { "machine": "dev", "file": "claude-a@b.com.json", "priority": 10 }
-            }),
-        )
-        .await;
-        assert_eq!(
-            r["result"]["content"][0]["text"],
-            r#"SetCliproxyAccountPriority { machine: "dev", file: "claude-a@b.com.json", priority: 10 }"#
-        );
         let r = rpc("tools/call", json!({ "name": "sleep_machine", "arguments": { "machine": "dev" } })).await;
         assert_eq!(r["result"], content("an agent is working".into(), true));
         let r = rpc("tools/call", json!({ "name": "resize_machine", "arguments": { "machine": "dev", "size": "huge" } })).await;

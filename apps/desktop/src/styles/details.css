@@ -244,28 +244,6 @@ button.row-name {
 .line .btn-link.is-danger {
   color: var(--danger);
 }
-.line .btn-priority {
-  height: 20px;
-  padding: 0 6px;
-  border-color: var(--line);
-  font: 500 10px/1 var(--font-mono);
-  color: var(--muted);
-}
-.line .btn-priority:hover:not(:disabled) {
-  color: var(--fg);
-  border-color: var(--frame);
-  background: var(--panel);
-}
-.line .btn-priority.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
-.line .btn-priority.is-on:hover:not(:disabled) {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
-  color: var(--accent-fg);
-}
 
 .line-add {
   display: flex;

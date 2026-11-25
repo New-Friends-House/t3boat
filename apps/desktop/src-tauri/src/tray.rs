@@ -472,17 +472,6 @@ async fn remove_cliproxy_account(ui: State<'_, Ui>, id: String, file: String) ->
     ui.app()?.machine(&id).map_err(err)?.remove_cliproxy_account(&file).await.map_err(err)
 }
 
-/// Sets the routing priority of an account in the machine's CLIProxyAPI (`0` resets to default).
-#[tauri::command]
-async fn set_cliproxy_account_priority(ui: State<'_, Ui>, id: String, file: String, priority: i32) -> Res {
-    ui.app()?
-        .machine(&id)
-        .map_err(err)?
-        .set_cliproxy_account_priority(&file, priority)
-        .await
-        .map_err(err)
-}
-
 /// Turns on T3 Connect there; resolves once other devices can reach it, after the user signed in
 /// to their T3 account in the browser.
 #[tauri::command]
@@ -618,7 +607,6 @@ pub fn run() {
             answer_sign_in,
             set_cliproxy,
             remove_cliproxy_account,
-            set_cliproxy_account_priority,
             turn_on_connect,
             get_machine_details,
             latest_thread,
