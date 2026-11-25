@@ -77,7 +77,7 @@ interface MachineDetails {
     name: string;
     signedIn: boolean;        // viaCliproxy: it has an account in the proxy; not signed in → "Sign in"
     viaCliproxy: boolean;     // reaches its models through the machine's CLIProxyAPI
-    accounts: { file: string; type: string; email: string | null; disabled: boolean }[];
+    accounts: { file: string; type: string; email: string | null; disabled: boolean; priority: number }[];
                               // those accounts (never a token); empty unless viaCliproxy
   }[];
   t3Version: string;          // T3 server version on the machine, e.g. "0.0.21"
@@ -87,7 +87,7 @@ interface MachineDetails {
 }
 ```
 
-The details view's **agents** section starts with a "Through CLIProxyAPI" switch (`set_cliproxy`). On, each of Claude and Codex lists its accounts in the proxy, with "Add account" (`sign_in_agent`) and Remove (`remove_cliproxy_account`, click twice).
+The details view's **agents** section starts with a "Through CLIProxyAPI" switch (`set_cliproxy`). On, each of Claude and Codex lists its accounts in the proxy, with "Add account" (`sign_in_agent`), a "Priority 10" toggle (`set_cliproxy_account_priority`, toggles `10` / `0`), and Remove (`remove_cliproxy_account`, click twice).
 
 ```ts
 ```
@@ -108,6 +108,7 @@ The details view's **agents** section starts with a "Through CLIProxyAPI" switch
 | `answer_sign_in` | `{ id, code }` | the code for the sign-in `codeWanted` names; resolves once T3 took it, rejects with T3's words when not (the field stays for another try). `code: null` cancels that sign-in |
 | `set_cliproxy` | `{ id, on }` | wakes the machine. On: installs CLIProxyAPI there (pinned version, checksum-checked) as a service on 127.0.0.1:8317 and points Claude Code (`~/.claude/settings.json` env) and Codex (`~/.codex/config.toml` provider) at it, with a key made there; resolves once applied. Off: stops it and takes exactly those settings back out, keeping the accounts. Accounts are signed in per machine (`sign_in_agent`), never copied from this computer: their OAuth refresh tokens are single-use |
 | `remove_cliproxy_account` | `{ id, file }` | `file` from `agents[].accounts`; deletes that credential from the machine's proxy |
+| `set_cliproxy_account_priority` | `{ id, file, priority }` | `file` from `agents[].accounts`; sets `priority` in that credential file on the machine (`0` clears it back to default; e.g. `10` prioritizes it ahead of default accounts). Requires CLIProxyAPI to be on for that machine; wakes it |
 | `turn_on_connect` | `{ id }` | turns on T3 Connect with T3's own `t3 up --connect` on the machine: T3's sign-in page opens in the browser, the user approves it, T3 restarts there; resolves once other devices can reach it (up to ~15 min). Rejects while an agent works (the restart would stop it). Details shows "other devices · T3 Connect" with Turn on, or "on" |
 | `keep_awake` | `{ id, minutes }` | keeps the machine up that long even unused (`null`: until stopped, i.e. no auto sleep; 0 ends it; "Sleep now" ends it too); wakes it if asleep; enforced on the machine, so it holds with the laptop closed. Details has an **Auto sleep** switch (on = `!keepAwakeForever`; off → `null`, on → `0`) and, while auto sleep is on, a one-time "Stay awake for…" (15m · 30m · 1h · 2h) that runs out by itself, with Stop (`0`) while `keepAwakeUntil` is set |
 | `resize_machine` | `{ id, size }` | asleep: applies on next wake; idle: sleeps and wakes onto it now (about a minute), keeping a "keep awake"; working (an agent or a build): applies after it next sleeps, never mid-turn |

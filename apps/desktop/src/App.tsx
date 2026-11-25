@@ -176,6 +176,15 @@ function Ready({ state, toast }: { state: UiState; toast: (t: string, tone?: "er
           await call("remove_cliproxy_account", { id: m.id, file: a.file });
           toast(`${a.account} is signed out of ${m.name}`, "info");
           return;
+        case "set_cliproxy_account_priority":
+          await call("set_cliproxy_account_priority", { id: m.id, file: a.file, priority: a.priority });
+          toast(
+            a.priority
+              ? `${a.account} priority set to ${a.priority} on ${m.name}`
+              : `${a.account} priority reset to default on ${m.name}`,
+            "info",
+          );
+          return;
         case "turn_on_connect":
           await call("turn_on_connect", { id: m.id });
           toast(`${m.name} is reachable from your other devices`, "info");

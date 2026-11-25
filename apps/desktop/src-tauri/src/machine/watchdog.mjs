@@ -382,7 +382,14 @@ function cliproxyAccounts() {
     try {
       const a = JSON.parse(readFileSync(join(CLIPROXY_AUTHS, file), "utf8"));
       if (typeof a.type !== "string") return [];
-      return [{ file, type: a.type, email: typeof a.email === "string" ? a.email : null, disabled: a.disabled === true }];
+      const raw =
+        typeof a.priority === "number"
+          ? a.priority
+          : typeof a.priority === "string" && /^-?\d+$/.test(a.priority.trim())
+            ? Number(a.priority.trim())
+            : 0;
+      const priority = Number.isSafeInteger(raw) ? raw : 0;
+      return [{ file, type: a.type, email: typeof a.email === "string" ? a.email : null, disabled: a.disabled === true, priority }];
     } catch {
       return [];
     }

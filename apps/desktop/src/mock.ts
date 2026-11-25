@@ -287,7 +287,7 @@ function create(): MockBackend {
       if (cliproxyOn.has(id)) {
         const list = (cliproxyAccounts[id] ??= []);
         const email = `you+${list.length + 1}@example.com`;
-        list.push({ file: `${agentType(agent)}-${email}.json`, type: agentType(agent), email, disabled: false });
+        list.push({ file: `${agentType(agent)}-${email}.json`, type: agentType(agent), email, disabled: false, priority: 0 });
         patch(id, { signedOut: cliproxySignedOut(id) });
         return;
       }
@@ -314,6 +314,17 @@ function create(): MockBackend {
       await wait(600);
       cliproxyAccounts[id] = (cliproxyAccounts[id] ?? []).filter((a) => a.file !== file);
       patch(id, { signedOut: cliproxySignedOut(id) });
+    },
+
+    async set_cliproxy_account_priority({ id, file, priority }) {
+      find(id);
+      if (!cliproxyOn.has(id)) throw "CLIProxyAPI is not enabled on this machine";
+      await wait(400);
+      const list = cliproxyAccounts[id] ?? [];
+      const acct = list.find((a) => a.file === file);
+      if (!acct) throw `no account file ${file}`;
+      acct.priority = priority;
+      emit();
     },
 
     async open_machine({ id }) {
