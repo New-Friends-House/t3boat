@@ -3,6 +3,8 @@ import { useMachineDetails, useLatestThread } from "../api";
 import type { AgentLogin, CliproxyAccount, MachineDetails as Details, LocalProject, MachineView, Size } from "../types";
 import {
   ACTIONS,
+  CLIPROXY_HIGH_PRIORITY,
+  accountPriority,
   addAccount,
   autoSleep,
   duration,
@@ -455,11 +457,33 @@ function CliproxyAccountLine({
 }) {
   const [armed, arm] = useArmed();
   const name = account.email ?? account.file;
+  const high = account.priority === CLIPROXY_HIGH_PRIORITY;
+  const nextPriority = high ? 0 : CLIPROXY_HIGH_PRIORITY;
+  const priorityLabel = high
+    ? `Priority ${CLIPROXY_HIGH_PRIORITY}`
+    : account.priority
+      ? `Priority ${account.priority}`
+      : `Priority ${CLIPROXY_HIGH_PRIORITY}`;
+  const priorityTitle = high
+    ? `Priority ${CLIPROXY_HIGH_PRIORITY} (used before default accounts) — click to reset to default`
+    : account.priority
+      ? `Priority ${account.priority} — click to set priority ${CLIPROXY_HIGH_PRIORITY}`
+      : `Give this account priority ${CLIPROXY_HIGH_PRIORITY} (used before default accounts)`;
+
   return (
     <li className="line line-account">
-      <span className="line-main line-dim" title={name}>
+      <span className={`line-main${high ? "" : " line-dim"}`} title={name}>
         {name}
       </span>
+      <button
+        className={`btn btn-priority${high ? " is-on" : ""}`}
+        aria-pressed={high}
+        title={priorityTitle}
+        disabled={disabled}
+        onClick={() => onAction(accountPriority(account.file, name, nextPriority))}
+      >
+        {priorityLabel}
+      </button>
       <button
         className={`btn btn-link${armed ? " is-danger" : ""}`}
         disabled={disabled}

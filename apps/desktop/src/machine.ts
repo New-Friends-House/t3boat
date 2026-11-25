@@ -40,6 +40,7 @@ export type Action = {
   | { cmd: "set_cliproxy"; on: boolean }
   /** a CliproxyAccount's file */
   | { cmd: "remove_cliproxy_account"; file: string; account: string }
+  | { cmd: "set_cliproxy_account_priority"; file: string; account: string; priority: number }
   /** discard: delete even while work runs on it */
   | { cmd: "delete_machine"; discard: boolean }
 );
@@ -80,6 +81,17 @@ export const removeAccount = (file: string, account: string): Action => ({
   busy: "Removing account…",
   file,
   account,
+});
+
+export const CLIPROXY_HIGH_PRIORITY = 10;
+
+export const accountPriority = (file: string, account: string, priority: number): Action => ({
+  cmd: "set_cliproxy_account_priority",
+  label: priority ? `Priority ${priority}` : "Reset priority",
+  busy: priority ? `Setting priority ${priority}…` : "Resetting priority…",
+  file,
+  account,
+  priority,
 });
 
 export const ACTIONS = {

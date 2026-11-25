@@ -105,6 +105,8 @@ export interface CliproxyAccount {
   type: string; // "claude", "codex", ...
   email: string | null;
   disabled: boolean;
+  /** Routing priority in CLIProxyAPI (default 0; higher numbers are tried first). */
+  priority: number;
 }
 
 export type SetupAction = "installBoat" | "signInBoat" | "installT3" | "recheck";
@@ -125,6 +127,7 @@ export interface Commands {
   answer_sign_in: [{ id: string; code: string | null }, void]; // the code for `codeWanted`'s sign-in; null cancels it
   set_cliproxy: [{ id: string; on: boolean }, void]; // wakes the machine; resolves once applied
   remove_cliproxy_account: [{ id: string; file: string }, void];
+  set_cliproxy_account_priority: [{ id: string; file: string; priority: number }, void];
   turn_on_connect: [{ id: string }, void]; // resolves once reachable, after the browser sign-in
   latest_thread: [{ id: string }, string | null]; // thread id
   get_machine_details: [{ id: string }, MachineDetails];
